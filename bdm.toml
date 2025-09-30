@@ -1,0 +1,27 @@
+[visualization]
+export = true
+interval = 1
+
+[[visualize_agent]]
+name = "TumorCell"
+additional_data_members = ["color_"]
+
+[[visualize_agent]]
+name = "StellateCell"
+additional_data_members = ["color_"]
+
+[[visualize_agent]]
+name = "EffectorTCell"
+additional_data_members = ["color_"]
+
+[[visualize_agent]]
+name = "NKCell"
+additional_data_members = ["color_"]
+
+[[visualize_agent]]
+name = "HelperTCell"
+additional_data_members = ["color_"]
+
+[[visualize_agent]]
+name = "TRegCell"
+additional_data_members = ["color_"]

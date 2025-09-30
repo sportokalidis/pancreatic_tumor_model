@@ -11,6 +11,6 @@
 // regarding copyright ownership.
 //
 // -----------------------------------------------------------------------------
-#include "pancreatic_tumor_new.h"
+#include "pancreatic_tumor_model.h"
 
-int main(int argc, const char** argv) { return bdm::Simulate(argc, argv); }
+int main(int argc, const char** argv) { return bdm::pancreatic_tumor::Simulate(argc, argv); }
