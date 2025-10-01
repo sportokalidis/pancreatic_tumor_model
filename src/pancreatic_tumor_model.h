@@ -28,69 +28,75 @@ struct Params {
   // Time & space
   real_t dt_minutes      = 1.0;     // scheduler step = 1 minute by default
   real_t min_bound       = 0.0;
-  real_t max_bound       = 100.0;
+  real_t max_bound       = 100.0;   // was 70 -> stabilize density/contacts
   real_t cell_radius_um  = 6.0;
-  real_t local_radius_um = 6.0;     // neighborhood radius for counting
+  real_t local_radius_um = 8.0;     // was 12 -> temper contact strength
 
-  // Initial counts (choose ratios to match figure; absolute scale is up to you)
-  size_t C0 = 600;   // Tumor (PCC)
-  size_t P0 = 240;   // Stellate (PSC)
-  size_t E0 = 120;    // CD8+ T
-  size_t N0 = 80;    // NK
-  size_t H0 = 180;    // Helper T
-  size_t R0 = 40;    // Tregs
+  // Initial counts (ratios from paper; absolute scale is up to you)
+  size_t C0 = 474;  // Tumor
+  size_t P0 = 10;   // PSC
+  size_t E0 = 431;  // CD8+
+  size_t N0 = 189;  // NK
+  size_t H0 = 839;  // Helper T
+  size_t R0 = 65;   // Tregs
+  // size_t C0 = 2368; // Tumor
+  // size_t P0 = 11;   // PSC
+  // size_t E0 = 2154; // CD8+
+  // size_t N0 = 943;  // NK
+  // size_t H0 = 4197; // Helper T
+  // size_t R0 = 325;  // Tregs
 
   // Soft local carrying capacities (crowding caps) for division moderation
-  int cap_C = 30;
-  int cap_P = 20;
-  int cap_E = 25;
-  int cap_N = 25;
-  int cap_H = 40;
-  int cap_R = 30;
+  int cap_C = 100;
+  int cap_P = 90;   // was 150 -> lets P bend (sigmoid) instead of pure exp
+  int cap_E = 12;
+  int cap_N = 12;
+  int cap_H = 20;
+  int cap_R = 15;
 
   // ---------------- Tumor (C) ----------------
-  real_t c_base_div           = 0.08;     // basal C division
-  real_t c_psc_boost          = 0.60;     // PSC -> C (strength)
-  real_t c_psc_half_sat       = 8.0;      // PSC half-saturation for boost
-  real_t c_kill_by_E          = 1.0e-3;   // E -> kill C (per E)
-  real_t c_kill_by_N          = 8.0e-4;   // N -> kill C (per N)
-  real_t c_r_inhib_Ekill      = 0.08;     // R inhibits E-kill; factor = 1/(1 + r1 * Rloc)
+  real_t c_base_div           = 0.05;     // was 0.04
+  real_t c_psc_boost          = 0.30;     // was 0.20
+  real_t c_psc_half_sat       = 20.0;     // was 30.0
+  real_t c_kill_by_E          = 5.0e-3;   // was 9.0e-3
+  real_t c_kill_by_N          = 3.0e-3;   // was 9.0e-3
+  real_t c_r_inhib_Ekill      = 0.10;     // ~same
 
   // ---------------- PSC (P) ----------------
-  real_t p_base_div           = 0.18;     // basal P division
-  real_t p_tumor_boost        = 0.40;     // C -> P (strength)
-  real_t p_tumor_half_sat     = 10.0;     // C half-saturation
-  real_t p_base_death         = 0.15;     // P death
+  real_t p_base_div           = 0.25;     // was 0.88 (far too fast)
+  real_t p_tumor_boost        = 0.60;     // was 0.80
+  real_t p_tumor_half_sat     = 25.0;     // was 50.0 (boost kicks earlier)
+  real_t p_base_death         = 0.05;     // was 0.01
 
   // ---------------- Effector T (E) ----------------
-  real_t e_base_birth         = 0.05;     // basal E birth / upreg
-  real_t e_help_from_H        = 0.25;     // H -> E (strength)
-  real_t e_help_half_sat      = 10.0;     // H half-saturation
-  real_t e_inactivation_by_C  = 2.0e-3;   // C -> E death / inactivation (per C)
-  real_t e_suppression_by_R   = 4.0e-3;   // R -> E death (per R)
-  real_t e_base_death         = 0.10;     // baseline E death
+  real_t e_base_birth         = 0.03;
+  real_t e_help_from_H        = 0.30;     // was 0.25
+  real_t e_help_half_sat      = 20.0;     // was 100.0
+  real_t e_inactivation_by_C  = 3.0e-3;   // was 4.0e-3
+  real_t e_suppression_by_R   = 6.0e-3;   // was 7.0e-3
+  real_t e_base_death         = 0.25;     // was 0.58 (reason E crashed)
 
   // ---------------- NK (N) ----------------
-  real_t n_base_birth         = 0.04;     // basal N birth
-  real_t n_help_from_H        = 0.20;     // H -> N (strength)
-  real_t n_help_half_sat      = 10.0;     // H half-saturation
-  real_t n_inactivation_by_C  = 1.5e-3;   // C -> N death (per C)
-  real_t n_suppression_by_R   = 3.0e-3;   // R -> N death (per R)
-  real_t n_base_death         = 0.10;     // baseline N death
+  real_t n_base_birth         = 0.03;     // was 0.024
+  real_t n_help_from_H        = 0.25;     // was 0.20
+  real_t n_help_half_sat      = 25.0;     // was 100.0
+  real_t n_inactivation_by_C  = 2.5e-3;   // was 3.5e-3
+  real_t n_suppression_by_R   = 4.0e-3;   // was 6.0e-3
+  real_t n_base_death         = 0.14;     // was 0.10 (still drifts down)
 
   // ---------------- Helper T (H) ----------------
-  real_t h_base_birth         = 0.06;     // basal H birth
-  real_t h_self_activation    = 0.20;     // H -> H (auto-activation)
-  real_t h_self_half_sat      = 15.0;     // half-saturation
-  real_t h_suppression_by_R   = 2.0e-3;   // R -> H death (per R)
-  real_t h_base_death         = 0.08;     // baseline H death
+  real_t h_base_birth         = 0.05;     // was 0.036
+  real_t h_self_activation    = 0.10;     // was 0.12
+  real_t h_self_half_sat      = 25.0;     // was 100.0
+  real_t h_suppression_by_R   = 3.0e-3;   // was 5.0e-3
+  real_t h_base_death         = 0.12;     // was 0.36
 
   // ---------------- Tregs (R) ----------------
-  real_t r_base_source        = 0.02;     // basal R birth / influx
-  real_t r_induction_by_E     = 1.5e-3;   // E -> R (per E)
-  real_t r_induction_by_H     = 1.5e-3;   // H -> R (per H)
-  real_t r_decay              = 0.12;     // baseline R death
-  real_t r_clear_by_N         = 2.0e-3;   // N -> R death (per N)
+  real_t r_base_source        = 0.10;     // was 0.2
+  real_t r_induction_by_E     = 2.0e-3;   // was 2.5e-3
+  real_t r_induction_by_H     = 2.0e-3;   // was 2.5e-3
+  real_t r_decay              = 0.12;
+  real_t r_clear_by_N         = 1.5e-3;   // was 1.0e-3
 
   // Colors (ParaView integer ids, easy to retune)
   struct Colors {
@@ -274,6 +280,8 @@ class PSCBehavior : public Behavior {
 
     real_t Fc = Sat(cnt.C, P()->p_tumor_half_sat);
     real_t crowd = 1.0 - Clamp(static_cast<real_t>(cnt.Pn) / std::max(1, P()->cap_P), 0.0, 1.0);
+    // Optional smoothing if you ever see noisy stalls:
+    // crowd = std::max(crowd, 0.15f);
 
     real_t div_rate = (P()->p_base_div + P()->p_tumor_boost * Fc) * crowd;
     real_t die_rate = P()->p_base_death;
@@ -450,21 +458,22 @@ class ReportPopCounts : public Behavior {
     });
 
     // Write CSV
-    static std::ofstream csv("populations.csv");
+    static std::ofstream csv("data-export/populations.csv");
     static bool wrote_header = false;
     if (!wrote_header) {
       csv << "step,days,C,P,E,N,H,R,total\n";
       wrote_header = true;
     }
-    csv << steps << "," << t_day << ","
-        << C << "," << Pn << "," << E << "," << N << "," << H << "," << R << ","
-        << (C+Pn+E+N+H+R) << "\n";
-    csv.flush();
 
-    // Optional: print a quick daily summary
+    // Optional: print daily + log to CSV daily
     if (steps % static_cast<size_t>(1440.0 / std::max<real_t>(1.0, P()->dt_minutes)) == 0) {
       std::cout << "[day " << t_day << "] C=" << C << " P=" << Pn
                 << " E=" << E << " N=" << N << " H=" << H << " R=" << R << "\n";
+
+      csv << steps << "," << t_day << ","
+          << C << "," << Pn << "," << E << "," << N << "," << H << "," << R << ","
+          << (C+Pn+E+N+H+R) << "\n";
+      csv.flush();
     }
   }
 };
@@ -533,10 +542,8 @@ inline int Simulate(int argc, const char** argv) {
   rep->AddBehavior(new ReportPopCounts());
   sim.GetExecutionContext()->AddAgent(rep);
 
-
-  // Run (tune steps as you like; with dt=1 min, 1440 steps ≈ 1 day)
-  // sim.GetScheduler()->Simulate(1440 * 100); // ~100 days
-  sim.GetScheduler()->Simulate(1500); // ~0.5 days
+  // Run (dt=1 min -> 1440 steps ≈ 1 day)
+  sim.GetScheduler()->Simulate(1440 * 100); // ~100 days
   std::cout << "Pancreatic tumor (C,P,E,N,H,R) simple ABM completed.\n";
   return 0;
 }
