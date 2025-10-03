@@ -1,4 +1,4 @@
-# pancreatic_tumor_new
+# pancreatic_tumor_model
 
 This repository contains a template for a BioDynaMo simulation. It consists of 
 the two folders `src/` and `test/`. The `src/` folder contains the simulation. 
