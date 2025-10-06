@@ -75,21 +75,21 @@ struct Params {
   real_t e_base_birth    = 0.035;
   real_t e_help_from_H   = 0.22;   // H → E help
   real_t e_help_from_H_K = 600.0;  // global H half-sat
-  real_t e_inact_by_C    = 0.3;  // C → E inactivation
-  real_t e_inact_by_C_K  = 900.0;  // global C half-sat
+  real_t e_inact_by_C    = 0.15;  // C → E inactivation
+  real_t e_inact_by_C_K  = 600.0;  // global C half-sat
   real_t e_suppr_by_R    = 0.04;  // R → E suppression (gated by C)
   real_t e_suppr_by_R_K  = 500.0;  // global R half-sat
-  real_t e_base_death    = 0.05;
+  real_t e_base_death    = 0.1;
 
   // ================= NK (N) =================
   real_t n_base_birth    = 0.03;
-  real_t n_help_from_H   = 0.20;
+  real_t n_help_from_H   = 0.15;
   real_t n_help_from_H_K = 600.0;
-  real_t n_inact_by_C    = 0.15;
-  real_t n_inact_by_C_K  = 400.0;
+  real_t n_inact_by_C    = 0.05;
+  real_t n_inact_by_C_K  = 600.0;
   real_t n_suppr_by_R    = 0.038; // gated by C
   real_t n_suppr_by_R_K  = 500.0;
-  real_t n_base_death    = 0.05;
+  real_t n_base_death    = 0.09;
 
   // ================= Helper T (H) =================
   real_t h_base_birth    = 0.05;
@@ -348,6 +348,8 @@ class EffectorBehavior : public Behavior {
                + P()->e_inact_by_C * Sat(static_cast<real_t>(gc.C), P()->e_inact_by_C_K) * gateC
                + P()->e_suppr_by_R * Sat(static_cast<real_t>(gc.R), P()->e_suppr_by_R_K) * gateC;
 
+    die *= static_cast<real_t>(gc.E) / (gc.E + 1.0);
+
     if (rng->Uniform(0,1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(e->GetUid());
       return;
@@ -384,6 +386,8 @@ class NKBehavior : public Behavior {
     real_t die = P()->n_base_death
                + P()->n_inact_by_C * Sat(static_cast<real_t>(gc.C), P()->n_inact_by_C_K) * gateC
                + P()->n_suppr_by_R * Sat(static_cast<real_t>(gc.R), P()->n_suppr_by_R_K) * gateC;
+
+    die *= static_cast<real_t>(gc.N) / (gc.N + 1.0);
 
     if (rng->Uniform(0,1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(n->GetUid());
