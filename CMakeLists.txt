@@ -14,21 +14,24 @@
 cmake_minimum_required(VERSION 3.19.3)
 project(pancreatic_tumor_new)
 
-# BioDynaMo curretly uses the C++17 standard.
 set(CMAKE_CXX_STANDARD 17)
 
-# Use BioDynaMo in this project.
 find_package(BioDynaMo REQUIRED)
-
-# See UseBioDynaMo.cmake in your BioDynaMo build folder for details.
-# Note that BioDynaMo provides gtest header/libraries in its include/lib dir.
 include(${BDM_USE_FILE})
 
-# Consider all files in src/ for BioDynaMo simulation.
-include_directories("src")
-file(GLOB_RECURSE PROJECT_HEADERS src/*.h)
-file(GLOB_RECURSE PROJECT_SOURCES src/*.cc)
+# Add src/include to the public include path so you can do: #include "ptm/..."
+# (You asked to keep headers under src/include, not top-level include/)
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}/src/include")
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}/src/")
 
+# Collect sources/headers
+file(GLOB_RECURSE PROJECT_HEADERS
+     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
+     "${CMAKE_CURRENT_SOURCE_DIR}/src/include/**/*.h")
+file(GLOB_RECURSE PROJECT_SOURCES
+     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc")
+
+# Build executable the BioDynaMo way (as you already do)
 bdm_add_executable(${CMAKE_PROJECT_NAME}
                    HEADERS ${PROJECT_HEADERS}
                    SOURCES ${PROJECT_SOURCES}
