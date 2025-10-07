@@ -48,7 +48,7 @@ struct Params {
   real_t K_R = 3500.0;
 
   // Global gating: immune suppression becomes strong only when tumor is large
-  real_t gate_C_K     = 300.0;    // half-saturation on global C
+  real_t gate_C_K     = 1000.0;    // half-saturation on global C
 
   // Generic half-sats for saturated interactions (in global agent counts)
   real_t K_small = 200.0;
@@ -349,6 +349,7 @@ class EffectorBehavior : public Behavior {
                + P()->e_suppr_by_R * Sat(static_cast<real_t>(gc.R), P()->e_suppr_by_R_K) * gateC;
 
     die *= static_cast<real_t>(gc.E) / (gc.E + 1.0);
+    // die *= std::pow(static_cast<real_t>(gc.E) / (gc.E + 50), 0.5);
 
     if (rng->Uniform(0,1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(e->GetUid());
@@ -388,6 +389,7 @@ class NKBehavior : public Behavior {
                + P()->n_suppr_by_R * Sat(static_cast<real_t>(gc.R), P()->n_suppr_by_R_K) * gateC;
 
     die *= static_cast<real_t>(gc.N) / (gc.N + 1.0);
+    // die *= std::pow(static_cast<real_t>(gc.N) / (gc.N + 20), 0.5);
 
     if (rng->Uniform(0,1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(n->GetUid());
