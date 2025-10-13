@@ -1,0 +1,31 @@
+{
+  "sweep_type": "tumor_growth",
+  "num_jobs": 5,
+  "jobs": [
+    {
+      "job_name": "tumor_growth_000",
+      "param_file": "param_sweep/params_tumor_growth_000.txt",
+      "description": "c_base_div=0.03, c_boost_from_P=0.15"
+    },
+    {
+      "job_name": "tumor_growth_001",
+      "param_file": "param_sweep/params_tumor_growth_001.txt",
+      "description": "c_base_div=0.03, c_boost_from_P=0.2"
+    },
+    {
+      "job_name": "tumor_growth_002",
+      "param_file": "param_sweep/params_tumor_growth_002.txt",
+      "description": "c_base_div=0.03, c_boost_from_P=0.25"
+    },
+    {
+      "job_name": "tumor_growth_003",
+      "param_file": "param_sweep/params_tumor_growth_003.txt",
+      "description": "c_base_div=0.03, c_boost_from_P=0.3"
+    },
+    {
+      "job_name": "tumor_growth_004",
+      "param_file": "param_sweep/params_tumor_growth_004.txt",
+      "description": "c_base_div=0.03, c_boost_from_P=0.35"
+    }
+  ]
+}

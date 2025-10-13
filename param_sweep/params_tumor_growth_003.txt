@@ -1,0 +1,85 @@
+# Pancreatic Tumor Model Parameters
+# Auto-generated parameter file
+
+# Time & Space
+dt_minutes = 1.0
+min_bound = 0.0
+max_bound = 100.0
+cell_radius_um = 6.0
+
+# Initial Counts
+C0 = 474
+P0 = 10
+E0 = 431
+N0 = 189
+H0 = 839
+R0 = 65
+
+# Carrying Capacities
+K_C = 3000.0
+K_P = 3000.0
+K_E = 3000.0
+K_N = 3000.0
+K_H = 4000.0
+K_R = 3500.0
+gate_C_K = 300.0
+
+# Generic Parameters
+K_small = 200.0
+K_med = 600.0
+K_big = 1200.0
+
+# Tumor Parameters
+c_base_div = 0.03
+c_boost_from_P = 0.3
+c_boost_from_P_K = 800.0
+c_kill_by_E = 0.012
+c_kill_by_E_K = 600.0
+c_kill_by_N = 0.007
+c_kill_by_N_K = 600.0
+c_R_blocks_E = 0.1
+
+# PSC Parameters
+p_base_div = 0.08
+p_boost_from_C = 0.1
+p_boost_from_C_K = 1000.0
+p_base_death = 0.05
+
+# Effector T Parameters
+e_base_birth = 0.035
+e_help_from_H = 0.22
+e_help_from_H_K = 600.0
+e_inact_by_C = 0.15
+e_inact_by_C_K = 600.0
+e_suppr_by_R = 0.04
+e_suppr_by_R_K = 500.0
+e_base_death = 0.1
+
+# NK Parameters
+n_base_birth = 0.03
+n_help_from_H = 0.15
+n_help_from_H_K = 600.0
+n_inact_by_C = 0.05
+n_inact_by_C_K = 600.0
+n_suppr_by_R = 0.038
+n_suppr_by_R_K = 500.0
+n_base_death = 0.1
+
+# Helper T Parameters
+h_base_birth = 0.05
+h_self_act = 0.09
+h_self_act_K = 1000.0
+h_suppr_by_R = 0.075
+h_suppr_by_R_K = 700.0
+h_base_death = 0.08
+
+# Treg Parameters
+r_base_src = 0.08
+r_induced_by_E = 0.008
+r_induced_by_E_K = 600.0
+r_induced_by_H = 0.008
+r_induced_by_H_K = 600.0
+r_cleared_by_N = 0.003
+r_cleared_by_N_K = 500.0
+r_decay = 0.06
+

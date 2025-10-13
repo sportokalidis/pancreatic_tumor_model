@@ -1,5 +1,8 @@
 // -----------------------------------------------------------------------------
-// Pancreatic Tumor Model (header-only core types + inline Simulate)
+//
+// Copyright (C) 2021 CERN & University of Surrey
+// BioDynaMo collaboration. Apache-2.0 license.
+//
 // -----------------------------------------------------------------------------
 #ifndef PANCREATIC_TUMOR_MODEL_H_
 #define PANCREATIC_TUMOR_MODEL_H_
@@ -8,88 +11,84 @@
 #include <cmath>
 #include <algorithm>
 #include <fstream>
+#include <mutex>
+#include <vector>
+#include "include/ptm/params.h"
+#include "include/ptm/helpers.h"
+#include "include/ptm/cell_types.h"
+#include "include/ptm/global_census.h"
+#include "include/ptm/behaviors/tumor_behavior.h"
+#include "include/ptm/behaviors/psc_behavior.h"
+#include "include/ptm/behaviors/eff_behavior.h"
+#include "include/ptm/behaviors/nk_behavior.h"
+#include "include/ptm/behaviors/helper_behavior.h"
+#include "include/ptm/behaviors/treg_behavior.h"
+#include "include/ptm/behaviors/reporter_behavior.h"
 
-// Params are now in a separate header
-#include "ptm/params.h"
-// Helpers are now in a separate header to avoid circular dependencies
-#include "ptm/helpers.h"
-// Agent types are now in a separate header to avoid circular dependencies
-#include "ptm/cell_types.h"
-// Global census for cell counting
-#include "ptm/global_census.h"
-// Behavior includes
-#include "ptm/behaviors/tumor_behavior.h"
-#include "ptm/behaviors/psc_behavior.h"
-#include "ptm/behaviors/eff_behavior.h"
-#include "ptm/behaviors/nk_behavior.h"
-#include "ptm/behaviors/helper_behavior.h"
-#include "ptm/behaviors/treg_behavior.h"
+namespace {
+  std::mutex cout_mtx;
+}
 
 namespace bdm {
 namespace pancreatic_tumor {
 
-class ReportPopCounts : public Behavior {
-  BDM_BEHAVIOR_HEADER(ReportPopCounts, Behavior, 1);
- public:
-  void Run(Agent* /*unused*/) override {
-    auto* sim = Simulation::GetActive();
-    auto* rm  = sim->GetResourceManager();
-    const auto steps = sim->GetScheduler()->GetSimulatedSteps();
-    const real_t t_day = (P()->dt_minutes * steps) / 1440.0;
+// All components are now included from modular headers:
+// - Params struct and P() function from ptm/params.h (with file loading)
+// - Helper functions from ptm/helpers.h
+// - Cell types from ptm/cell_types.h  
+// - GlobalCensus from ptm/global_census.h
+// - Behaviors from ptm/behaviors/*.h
 
-    size_t C=0, Pn=0, E=0, N=0, H=0, R=0;
-    rm->ForEachAgent([&](Agent* a) {
-      if      (dynamic_cast<TumorCell*>(a))     ++C;
-      else if (dynamic_cast<StellateCell*>(a))  ++Pn;
-      else if (dynamic_cast<EffectorTCell*>(a)) ++E;
-      else if (dynamic_cast<NKCell*>(a))        ++N;
-      else if (dynamic_cast<HelperTCell*>(a))   ++H;
-      else if (dynamic_cast<TRegCell*>(a))      ++R;
-    });
-
-    static std::ofstream csv("data-export/populations.csv");
-    static bool wrote_header = false;
-    if (!wrote_header) {
-      csv << "step,days,C,P,E,N,H,R,total\n";
-      wrote_header = true;
-    }
-    if (steps % static_cast<size_t>(1440.0 / std::max<real_t>(1.0, P()->dt_minutes)) == 0) {
-      std::cout << "[day " << t_day << "] C=" << C << " P=" << Pn
-                << " E=" << E << " N=" << N << " H=" << H << " R=" << R << "\n";
-      csv << steps << "," << t_day << ","
-          << C << "," << Pn << "," << E << "," << N << "," << H << "," << R << ","
-          << (C+Pn+E+N+H+R) << "\n";
-      csv.flush();
+// -------------------------------------------------------
+// Simulate
+// -------------------------------------------------------
+inline int Simulate(int argc, const char** argv) {
+  // Parse command line arguments for parameter file and output directory
+  std::string param_file = "";
+  std::string output_dir = ".";
+  
+  // Create filtered argument list for BioDynaMo (removing our custom args)
+  std::vector<const char*> bdm_argv;
+  bdm_argv.push_back(argv[0]); // program name
+  
+  for (int i = 1; i < argc; i++) {
+    std::string arg = argv[i];
+    if (arg == "--param-file" && i + 1 < argc) {
+      param_file = argv[i + 1];
+      setenv("PARAM_FILE", param_file.c_str(), 1);
+      i++; // skip next argument
+    } else if (arg == "--output-dir" && i + 1 < argc) {
+      output_dir = argv[i + 1];
+      setenv("OUTPUT_DIR", output_dir.c_str(), 1);
+      i++; // skip next argument
+    } else {
+      // Pass other arguments to BioDynaMo
+      bdm_argv.push_back(argv[i]);
     }
   }
-};
-
-// (optional) file-based params loader; include only if you use it
-// #include "ptm/params_io.h"
-
-// -----------------------------------------------------------------------------
-// Inline Simulate (moved from .cc into this header)
-// -----------------------------------------------------------------------------
-inline int Simulate(int argc, const char** argv) {
+  
+  // Create output directory if it doesn't exist
+  system(("mkdir -p " + output_dir).c_str());
+  
+  std::cout << "Loaded parameters from " << (param_file.empty() ? "default values" : param_file) << std::endl;
+  std::cout << "Output directory: " << output_dir << std::endl;
+  
   auto setp = [](Param* param) {
     param->bound_space = Param::BoundSpaceMode::kClosed;
     param->min_bound = P()->min_bound;
     param->max_bound = P()->max_bound;
-    param->simulation_time_step = P()->dt_minutes; // minutes
   };
 
-  Simulation sim(argc, argv, setp);
+  Simulation sim(bdm_argv.size(), bdm_argv.data(), setp);
   auto* ctxt = sim.GetExecutionContext();
   auto* rng  = sim.GetRandom();
 
   auto rand_pos = [&]() -> Real3 {
-    return Real3{rng->Uniform(P()->min_bound, P()->max_bound),
-                 rng->Uniform(P()->min_bound, P()->max_bound),
-                 rng->Uniform(P()->min_bound, P()->max_bound)};
+    real_t x = rng->Uniform(P()->min_bound, P()->max_bound);
+    real_t y = rng->Uniform(P()->min_bound, P()->max_bound);
+    real_t z = rng->Uniform(P()->min_bound, P()->max_bound);
+    return Real3{x, y, z};
   };
-
-  // Optionally load params from file (uncomment if you use params_io.h)
-  // LoadParamsFromFile("params.txt", P());
 
   // Seed populations
   for (size_t i=0; i<P()->C0; ++i) {
@@ -135,7 +134,7 @@ inline int Simulate(int argc, const char** argv) {
   sim.GetExecutionContext()->AddAgent(rep);
 
   // Run ~100 days (1 min step → 1440 steps per day)
-  sim.GetScheduler()->Simulate(1440 * 100);
+  sim.GetScheduler()->Simulate(1440 * 2);
   std::cout << "Pancreatic tumor (C,P,E,N,H,R) ABM (global interactions) completed.\n";
   return 0;
 }

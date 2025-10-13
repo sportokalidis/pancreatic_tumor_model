@@ -1,0 +1,109 @@
+# Pancreatic Tumor Model Parameters
+# Lines starting with '#' are comments and will be ignored
+# Format: parameter_name = value
+
+# =============================================================================
+# Time & Space Parameters
+# =============================================================================
+dt_minutes = 1.0          # Scheduler step in minutes
+min_bound = 0.0           # Minimum spatial boundary
+max_bound = 100.0         # Maximum spatial boundary
+cell_radius_um = 6.0      # Cell radius in micrometers
+
+# =============================================================================
+# Initial Agent Counts (small ABM)
+# =============================================================================
+C0 = 474                  # Initial tumor cells
+P0 = 10                   # Initial PSC (Pancreatic Stellate Cells)
+E0 = 431                  # Initial CD8+ T cells (Effector T cells)
+N0 = 189                  # Initial NK cells
+H0 = 839                  # Initial Helper T cells
+R0 = 65                   # Initial Tregs (Regulatory T cells)
+
+# =============================================================================
+# Global Carrying Capacities (agents)
+# =============================================================================
+K_C = 3000.0              # Tumor cell carrying capacity
+K_P = 3000.0              # PSC carrying capacity
+K_E = 3000.0              # Effector T cell carrying capacity
+K_N = 3000.0              # NK cell carrying capacity
+K_H = 4000.0              # Helper T cell carrying capacity
+K_R = 3500.0              # Treg carrying capacity
+
+# =============================================================================
+# Global Gating Parameters
+# =============================================================================
+gate_C_K = 300.0          # Half-saturation on global C for immune suppression
+
+# =============================================================================
+# Generic Half-Saturation Constants
+# =============================================================================
+K_small = 200.0           # Small interaction half-saturation
+K_med = 600.0             # Medium interaction half-saturation
+K_big = 1200.0            # Large interaction half-saturation
+
+# =============================================================================
+# Tumor Cell (C) Parameters
+# =============================================================================
+c_base_div = 0.05         # Baseline division rate per day
+c_boost_from_P = 0.25     # P → C proliferative boost
+c_boost_from_P_K = 800.0  # Global P half-sat for boost
+c_kill_by_E = 0.012       # E → C killing rate
+c_kill_by_E_K = 600.0     # Global E half-sat for killing
+c_kill_by_N = 0.007       # N → C killing rate
+c_kill_by_N_K = 600.0     # Global N half-sat for killing
+c_R_blocks_E = 0.10       # Factor by which R blocks E killing
+
+# =============================================================================
+# PSC (P) Parameters
+# =============================================================================
+p_base_div = 0.08         # Baseline division rate per day
+p_boost_from_C = 0.10     # C → P proliferative boost
+p_boost_from_C_K = 1000.0 # Global C half-sat for boost
+p_base_death = 0.05       # Baseline death rate per day
+
+# =============================================================================
+# Effector T Cell (E) Parameters
+# =============================================================================
+e_base_birth = 0.035      # Baseline birth rate per day
+e_help_from_H = 0.22      # H → E help factor
+e_help_from_H_K = 600.0   # Global H half-sat for help
+e_inact_by_C = 0.15       # C → E inactivation rate
+e_inact_by_C_K = 600.0    # Global C half-sat for inactivation
+e_suppr_by_R = 0.04       # R → E suppression rate (gated by C)
+e_suppr_by_R_K = 500.0    # Global R half-sat for suppression
+e_base_death = 0.10       # Baseline death rate per day
+
+# =============================================================================
+# NK Cell (N) Parameters
+# =============================================================================
+n_base_birth = 0.03       # Baseline birth rate per day
+n_help_from_H = 0.15      # H → N help factor
+n_help_from_H_K = 600.0   # Global H half-sat for help
+n_inact_by_C = 0.05       # C → N inactivation rate
+n_inact_by_C_K = 600.0    # Global C half-sat for inactivation
+n_suppr_by_R = 0.038      # R → N suppression rate (gated by C)
+n_suppr_by_R_K = 500.0    # Global R half-sat for suppression
+n_base_death = 0.10       # Baseline death rate per day
+
+# =============================================================================
+# Helper T Cell (H) Parameters
+# =============================================================================
+h_base_birth = 0.05       # Baseline birth rate per day
+h_self_act = 0.09         # Self-activation factor
+h_self_act_K = 1000.0     # Global H half-sat for self-activation
+h_suppr_by_R = 0.075      # R → H suppression rate (gated by C)
+h_suppr_by_R_K = 700.0    # Global R half-sat for suppression
+h_base_death = 0.08       # Baseline death rate per day
+
+# =============================================================================
+# Treg (R) Parameters
+# =============================================================================
+r_base_src = 0.08         # Baseline source rate per day
+r_induced_by_E = 0.008    # E → R induction rate
+r_induced_by_E_K = 600.0  # Global E half-sat for induction
+r_induced_by_H = 0.008    # H → R induction rate
+r_induced_by_H_K = 600.0  # Global H half-sat for induction
+r_cleared_by_N = 0.003    # N → R clearance rate
+r_cleared_by_N_K = 500.0  # Global N half-sat for clearance
+r_decay = 0.06            # Natural decay rate per day

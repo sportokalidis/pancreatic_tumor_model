@@ -2,6 +2,9 @@
 #define PTM_PARAMS_H_
 
 #include "biodynamo.h"
+#include <iostream>
+#include <string>
+#include <cstdlib>
 
 namespace bdm {
 namespace pancreatic_tumor {
@@ -108,8 +111,35 @@ struct Params {
   } color;
 };
 
-// Singleton accessor
-inline Params* P() { static Params p; return &p; }
+// Forward declaration of LoadParamsFromFile function
+bool LoadParamsFromFile(const std::string& path, Params* out);
+
+// Singleton accessor with flexible file loading
+inline Params* P() { 
+  static Params p;
+  static bool loaded = false;
+  
+  if (!loaded) {
+    // Check for parameter file in this order:
+    // 1. Environment variable PARAM_FILE
+    // 2. Default params.txt
+    std::string config_file = "params.txt";
+    
+    const char* env_param_file = std::getenv("PARAM_FILE");
+    if (env_param_file) {
+      config_file = std::string(env_param_file);
+    }
+    
+    if (LoadParamsFromFile(config_file, &p)) {
+      std::cout << "Loaded parameters from " << config_file << std::endl;
+    } else {
+      std::cout << "Could not load " << config_file << ", using default parameters" << std::endl;
+    }
+    loaded = true;
+  }
+  
+  return &p; 
+}
 
 }  // namespace pancreatic_tumor
 }  // namespace bdm
