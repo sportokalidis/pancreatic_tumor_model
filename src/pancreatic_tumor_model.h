@@ -11,35 +11,34 @@
 #include <cmath>
 #include <algorithm>
 #include <fstream>
-#include <mutex>
-
-namespace {
-  std::mutex cout_mtx;
-}
 
 namespace bdm {
 namespace pancreatic_tumor {
 
-// -------------------------------------------------------
-// Parameters (per day unless noted)
-// All interactions now use GLOBAL population counts.
-// -------------------------------------------------------
+// ============================================================================
+// Parameters
+// ============================================================================
 struct Params {
-  // Time & space
-  real_t dt_minutes      = 1.0;   // scheduler step in minutes
+  // --- time & space ---
+  real_t dt_minutes      = 1.0;    // scheduler step (minutes)
   real_t min_bound       = 0.0;
   real_t max_bound       = 100.0;
   real_t cell_radius_um  = 6.0;
 
-  // Initial agent counts (small ABM)
-  size_t C0 = 474;  // Tumor
-  size_t P0 = 10;   // PSC
-  size_t E0 = 431;  // CD8+
-  size_t N0 = 189;  // NK
-  size_t H0 = 839;  // Helper T
-  size_t R0 = 65;   // Tregs
+  // --- interaction mode ---
+  bool   use_local_counts = true;  // false = global interactions, true = local
+  real_t local_radius_um  = 12.0;   // neighborhood radius if local mode
 
-  // Global carrying capacities (agents): logistic crowding per type uses these
+  // --- initial counts ---
+  size_t C0 = 474;  // Tumor (C)
+  size_t P0 = 10;   // PSC (P)
+  size_t E0 = 431;  // CD8+ Effector (E)
+  size_t N0 = 189;  // NK (N)
+  size_t H0 = 839;  // Helper (H)
+  size_t R0 = 65;   // Tregs (R)
+
+  // --- carrying capacities (used in crowding) ---
+  // In global mode: these are global caps. In local mode: they are recomputed.
   real_t K_C = 3000.0;
   real_t K_P = 3000.0;
   real_t K_E = 3000.0;
@@ -47,85 +46,110 @@ struct Params {
   real_t K_H = 4000.0;
   real_t K_R = 3500.0;
 
-  // Global gating: immune suppression becomes strong only when tumor is large
-  real_t gate_C_K     = 1000.0;    // half-saturation on global C
+  // --- local-capacity estimation knobs (only used if use_local_counts=true) ---
+  real_t packing_fraction = 0.64;   // random-close packing for spheres
+  real_t capacity_margin  = 0.75;   // conservative margin
+  bool   lock_equal_caps  = false;   // one K for all types
+  size_t min_local_K      = 10;     // never go below this
 
-  // Generic half-sats for saturated interactions (in global agent counts)
+  // Recompute Ks for local mode from radius and cell size
+  void RecomputeCapsForLocal() {
+    if (!use_local_counts) return;
+    const real_t r  = std::max<real_t>(local_radius_um, cell_radius_um);
+    const real_t R  = std::max<real_t>(cell_radius_um, 1.0);
+    const real_t base = packing_fraction * capacity_margin * std::pow(r / R, 3.0);
+    const real_t Kest = std::max<real_t>(std::round(base), static_cast<real_t>(min_local_K));
+    if (lock_equal_caps) {
+      K_C = K_P = K_E = K_N = K_R = K_H = Kest;
+    } else {
+      K_C = Kest;
+      K_P = Kest;
+      K_E = Kest;
+      K_N = Kest;
+      K_H = std::round(1.2 * Kest);
+      K_R = std::round(1.1 * Kest);
+    }
+  }
+
+  // --- smooth gates / half-saturation for global signals ---
+  real_t gate_C_K = 1000.0; // gate strength from tumor size
+
+  // generic half-sats if needed elsewhere
   real_t K_small = 200.0;
   real_t K_med   = 600.0;
   real_t K_big   = 1200.0;
 
   // ================= Tumor (C) =================
-  real_t c_base_div      = 0.05;   // baseline division
-  real_t c_boost_from_P  = 0.25;   // P → C proliferative boost
-  real_t c_boost_from_P_K= 800.0;  // global P half-sat for boost
-  real_t c_kill_by_E     = 0.012;  // E→C killing
-  real_t c_kill_by_E_K   = 600.0;  // global E half-sat
-  real_t c_kill_by_N     = 0.007;  // N→C killing
-  real_t c_kill_by_N_K   = 600.0;  // global N half-sat
-  real_t c_R_blocks_E    = 0.10;   // 1/(1 + alpha * R) reduces E-kill
+  real_t c_base_div      = 0.05;   // per day
+  real_t c_boost_from_P  = 0.25;   // PSC→tumor boost
+  real_t c_boost_from_P_K= 800.0;  // half-sat (global P) OR local P count
+  real_t c_kill_by_E     = 0.012;  // E kills C
+  real_t c_kill_by_E_K   = 600.0;  // half-sat
+  real_t c_kill_by_N     = 0.007;  // N kills C
+  real_t c_kill_by_N_K   = 600.0;  // half-sat
+  real_t c_R_blocks_E    = 0.10;   // E effectiveness reduced by R
 
   // ================= PSC (P) =================
   real_t p_base_div      = 0.08;
-  real_t p_boost_from_C  = 0.10;   // strong C → P boost
-  real_t p_boost_from_C_K= 1000.0; // later boost onset (global)
+  real_t p_boost_from_C  = 0.25;    // C→P boost
+  real_t p_boost_from_C_K= 5.0;
   real_t p_base_death    = 0.05;
 
   // ================= Effector T (E) =================
   real_t e_base_birth    = 0.035;
-  real_t e_help_from_H   = 0.22;   // H → E help
-  real_t e_help_from_H_K = 600.0;  // global H half-sat
-  real_t e_inact_by_C    = 0.15;  // C → E inactivation
-  real_t e_inact_by_C_K  = 600.0;  // global C half-sat
-  real_t e_suppr_by_R    = 0.04;  // R → E suppression (gated by C)
-  real_t e_suppr_by_R_K  = 500.0;  // global R half-sat
-  real_t e_base_death    = 0.1;
+  real_t e_help_from_H   = 0.22;    // H→E help
+  real_t e_help_from_H_K = 5.0;
+  real_t e_inact_by_C    = 0.15;    // C inactivation on E
+  real_t e_inact_by_C_K  = 5.0;
+  real_t e_suppr_by_R    = 0.04;    // R suppress E
+  real_t e_suppr_by_R_K  = 5.0;
+  real_t e_base_death    = 0.15;
 
   // ================= NK (N) =================
   real_t n_base_birth    = 0.03;
   real_t n_help_from_H   = 0.15;
-  real_t n_help_from_H_K = 600.0;
-  real_t n_inact_by_C    = 0.05;
-  real_t n_inact_by_C_K  = 600.0;
-  real_t n_suppr_by_R    = 0.038; // gated by C
-  real_t n_suppr_by_R_K  = 500.0;
-  real_t n_base_death    = 0.09;
+  real_t n_help_from_H_K = 5.0;
+  real_t n_inact_by_C    = 0.15;
+  real_t n_inact_by_C_K  = 5.0;
+  real_t n_suppr_by_R    = 0.038;
+  real_t n_suppr_by_R_K  = 5.0;
+  real_t n_base_death    = 0.12;
 
   // ================= Helper T (H) =================
   real_t h_base_birth    = 0.05;
   real_t h_self_act      = 0.09;
-  real_t h_self_act_K    = 1000.0; // weak self-activation, global
-  real_t h_suppr_by_R    = 0.075; // gated by C
-  real_t h_suppr_by_R_K  = 700.0;
-  real_t h_base_death    = 0.08;
+  real_t h_self_act_K    = 5.0;
+  real_t h_suppr_by_R    = 0.075;
+  real_t h_suppr_by_R_K  = 5.0;
+  real_t h_base_death    = 0.05;
 
   // ================= Tregs (R) =================
   real_t r_base_src      = 0.08;
-  real_t r_induced_by_E  = 0.008;  // E → R induction
+  real_t r_induced_by_E  = 0.008;
   real_t r_induced_by_E_K= 600.0;
-  real_t r_induced_by_H  = 0.008;  // H → R induction
+  real_t r_induced_by_H  = 0.008;
   real_t r_induced_by_H_K= 600.0;
-  real_t r_cleared_by_N  = 0.003;  // N → R clearance
+  real_t r_cleared_by_N  = 0.003;
   real_t r_cleared_by_N_K= 500.0;
   real_t r_decay         = 0.06;
 
-  // Colors
+  // --- Colors (UI) ---
   struct Colors {
-    int tumor   = 8;
-    int psc     = 4;
-    int eff     = 5;
-    int nk      = 3;
-    int helper  = 6;
-    int treg    = 1;
+    int tumor          = 8;
+    int psc            = 4;
+    int eff            = 5;
+    int nk             = 3;
+    int helper         = 6;
+    int treg           = 1;
     int tumor_div_tint = 7;
   } color;
 };
 
 inline Params* P() { static Params p; return &p; }
 
-// -------------------------------------------------------
+// ============================================================================
 // Helpers
-// -------------------------------------------------------
+// ============================================================================
 inline real_t Clamp(real_t v, real_t lo, real_t hi) {
   return v < lo ? lo : (v > hi ? hi : v);
 }
@@ -137,13 +161,12 @@ inline Real3 ClampPoint(const Real3& pos) {
 inline real_t Sat(real_t x, real_t K) { return (x <= 0) ? 0.0 : x / (K + x); }
 inline real_t ProbFromRate(real_t rate_per_day, real_t dt_day) {
   if (rate_per_day <= 0) return 0.0;
-  real_t v = std::exp(-rate_per_day * dt_day);
-  return 1.0 - v;
+  return 1.0 - std::exp(-rate_per_day * dt_day);
 }
 
-// -------------------------------------------------------
+// ============================================================================
 // Agent types
-// -------------------------------------------------------
+// ============================================================================
 class TumorCell : public Cell {
   BDM_AGENT_HEADER(TumorCell, Cell, 1);
  public:
@@ -210,40 +233,76 @@ class TRegCell : public Cell {
   int color_ = 0;
 };
 
-// -------------------------------------------------------
-// Global census helper (compute once per scheduler step)
-// -------------------------------------------------------
+// ============================================================================
+// Counting utilities: GLOBAL and LOCAL
+// ============================================================================
+struct Counts { size_t C=0, P=0, E=0, N=0, H=0, R=0; };
+
+// ---- Global census (computed at most once per step) ----
 struct GlobalCensus {
   size_t step_cached = std::numeric_limits<size_t>::max();
-  size_t C=0, Pn=0, E=0, N=0, H=0, R=0;
+  Counts cnt;
 
-  static GlobalCensus& Instance() {
-    static GlobalCensus gc;
-    return gc;
-  }
+  static GlobalCensus& Instance() { static GlobalCensus gc; return gc; }
 
   void RefreshIfNeeded() {
     auto* sim = Simulation::GetActive();
     auto steps = sim->GetScheduler()->GetSimulatedSteps();
     if (steps == step_cached) return;
 
-    size_t C_=0, P_=0, E_=0, N_=0, H_=0, R_=0;
+    Counts c;
     sim->GetResourceManager()->ForEachAgent([&](Agent* a) {
-      if      (dynamic_cast<TumorCell*>(a))     ++C_;
-      else if (dynamic_cast<StellateCell*>(a))  ++P_;
-      else if (dynamic_cast<EffectorTCell*>(a)) ++E_;
-      else if (dynamic_cast<NKCell*>(a))        ++N_;
-      else if (dynamic_cast<HelperTCell*>(a))   ++H_;
-      else if (dynamic_cast<TRegCell*>(a))      ++R_;
+      if      (dynamic_cast<TumorCell*>(a))     ++c.C;
+      else if (dynamic_cast<StellateCell*>(a))  ++c.P;
+      else if (dynamic_cast<EffectorTCell*>(a)) ++c.E;
+      else if (dynamic_cast<NKCell*>(a))        ++c.N;
+      else if (dynamic_cast<HelperTCell*>(a))   ++c.H;
+      else if (dynamic_cast<TRegCell*>(a))      ++c.R;
     });
-    C  = C_;  Pn = P_;  E = E_;  N = N_;  H = H_;  R = R_;
+    cnt = c;
     step_cached = steps;
   }
 };
 
-// -------------------------------------------------------
-// Behaviors (use ONLY global totals via GlobalCensus)
-// -------------------------------------------------------
+// ---- Local neighborhood counter (within radius) ----
+struct LocalNeighborhoodCounter {
+  struct Fun : public Functor<void, Agent*, real_t> {
+    Counts* out;
+    explicit Fun(Counts* o) : out(o) {}
+    void operator()(Agent* nb, real_t /*sq*/) override {
+      if      (dynamic_cast<TumorCell*>(nb))     ++out->C;
+      else if (dynamic_cast<StellateCell*>(nb))  ++out->P;
+      else if (dynamic_cast<EffectorTCell*>(nb)) ++out->E;
+      else if (dynamic_cast<NKCell*>(nb))        ++out->N;
+      else if (dynamic_cast<HelperTCell*>(nb))   ++out->H;
+      else if (dynamic_cast<TRegCell*>(nb))      ++out->R;
+    }
+  };
+
+  static Counts Around(const Agent& a, real_t radius_um) {
+    Counts out;
+    auto* ctxt = Simulation::GetActive()->GetExecutionContext();
+    Fun f(&out);
+    const real_t sr = radius_um * radius_um;
+    ctxt->ForEachNeighbor(f, a, sr);
+    return out;
+  }
+};
+
+// Unified accessor: returns either global or local counts for the calling agent
+inline Counts GetRelevantCounts(const Agent& self) {
+  if (!P()->use_local_counts) {
+    auto& gc = GlobalCensus::Instance();
+    gc.RefreshIfNeeded();
+    return gc.cnt;
+  } else {
+    return LocalNeighborhoodCounter::Around(self, P()->local_radius_um);
+  }
+}
+
+// ============================================================================
+// Behaviors
+// ============================================================================
 class TumorBehavior : public Behavior {
   BDM_BEHAVIOR_HEADER(TumorBehavior, Behavior, 1);
  public:
@@ -253,17 +312,14 @@ class TumorBehavior : public Behavior {
     auto* rng = Simulation::GetActive()->GetRandom();
     c->SetPosition(ClampPoint(c->GetPosition()));
 
-    // refresh global counts once per step
-    auto& gc = GlobalCensus::Instance();
-    gc.RefreshIfNeeded();
-
     const real_t dt_day = P()->dt_minutes / 1440.0;
+    const Counts cnt = GetRelevantCounts(*c);
 
-    // Logistic crowding on global C
-    real_t crowd = 1.0 - Clamp(static_cast<real_t>(gc.C) / std::max<real_t>(1.0, P()->K_C), 0.0, 1.0);
+    // crowding on C
+    real_t crowd = 1.0 - Clamp(static_cast<real_t>(cnt.C) / std::max<real_t>(1.0, P()->K_C), 0.0, 1.0);
 
-    // Birth: baseline + global P boost
-    real_t boostP = P()->c_boost_from_P * Sat(static_cast<real_t>(gc.Pn), P()->c_boost_from_P_K);
+    // division: baseline + PSC boost (saturated by PSC count)
+    real_t boostP = P()->c_boost_from_P * Sat(static_cast<real_t>(cnt.P), P()->c_boost_from_P_K);
     real_t div_rate = (P()->c_base_div + boostP) * crowd;
 
     if (rng->Uniform(0,1) < ProbFromRate(div_rate, dt_day)) {
@@ -277,11 +333,12 @@ class TumorBehavior : public Behavior {
       c->SetCellColor(P()->color.tumor);
     }
 
-    // Death: E and N global killing; E effectiveness reduced by R; gated by C
-    real_t gateC = Sat(static_cast<real_t>(gc.C), P()->gate_C_K);
-    real_t inhibit_E = 1.0 / (1.0 + P()->c_R_blocks_E * static_cast<real_t>(gc.R));
-    real_t killE = P()->c_kill_by_E * Sat(static_cast<real_t>(gc.E), P()->c_kill_by_E_K) * inhibit_E * gateC;
-    real_t killN = P()->c_kill_by_N * Sat(static_cast<real_t>(gc.N), P()->c_kill_by_N_K) * gateC;
+    // death: E and N killing, E reduced by R
+    // In global mode we gate by tumor size; in local mode, gating naturally comes from local counts.
+    real_t gateC = P()->use_local_counts ? 1.0 : Sat(static_cast<real_t>(cnt.C), P()->gate_C_K);
+    real_t inhibit_E = 1.0 / (1.0 + P()->c_R_blocks_E * static_cast<real_t>(cnt.R));
+    real_t killE = P()->c_kill_by_E * Sat(static_cast<real_t>(cnt.E), P()->c_kill_by_E_K) * inhibit_E * gateC;
+    real_t killN = P()->c_kill_by_N * Sat(static_cast<real_t>(cnt.N), P()->c_kill_by_N_K) * gateC;
     real_t p_kill = ProbFromRate(killE + killN, dt_day);
 
     if (rng->Uniform(0,1) < p_kill) {
@@ -299,13 +356,11 @@ class PSCBehavior : public Behavior {
     auto* rng = Simulation::GetActive()->GetRandom();
     psc->SetPosition(ClampPoint(psc->GetPosition()));
 
-    auto& gc = GlobalCensus::Instance();
-    gc.RefreshIfNeeded();
-
     const real_t dt_day = P()->dt_minutes / 1440.0;
+    const Counts cnt = GetRelevantCounts(*psc);
 
-    real_t crowd  = 1.0 - Clamp(static_cast<real_t>(gc.Pn) / std::max<real_t>(1.0, P()->K_P), 0.0, 1.0);
-    real_t boostC = P()->p_boost_from_C * Sat(static_cast<real_t>(gc.C), P()->p_boost_from_C_K);
+    real_t crowd  = 1.0 - Clamp(static_cast<real_t>(cnt.P) / std::max<real_t>(1.0, P()->K_P), 0.0, 1.0);
+    real_t boostC = P()->p_boost_from_C * Sat(static_cast<real_t>(cnt.C), P()->p_boost_from_C_K);
     real_t div_rate = (P()->p_base_div + boostC) * crowd;
     real_t die_rate = P()->p_base_death;
 
@@ -332,24 +387,20 @@ class EffectorBehavior : public Behavior {
     auto* rng = Simulation::GetActive()->GetRandom();
     e->SetPosition(ClampPoint(e->GetPosition()));
 
-    auto& gc = GlobalCensus::Instance();
-    gc.RefreshIfNeeded();
-
     const real_t dt_day = P()->dt_minutes / 1440.0;
+    const Counts cnt = GetRelevantCounts(*e);
 
-    // Birth: baseline + help from global H, moderated by global E crowding
-    real_t crowdE = 1.0 - Clamp(static_cast<real_t>(gc.E) / std::max<real_t>(1.0, P()->K_E), 0.0, 1.0);
-    real_t helpH  = P()->e_help_from_H * Sat(static_cast<real_t>(gc.H), P()->e_help_from_H_K);
+    real_t crowdE = 1.0 - Clamp(static_cast<real_t>(cnt.E) / std::max<real_t>(1.0, P()->K_E), 0.0, 1.0);
+    real_t helpH  = P()->e_help_from_H * Sat(static_cast<real_t>(cnt.H), P()->e_help_from_H_K);
     real_t birth  = (P()->e_base_birth + helpH) * crowdE;
 
-    // Death/suppression: inactivation by C & suppression by R, gated by C
-    real_t gateC = Sat(static_cast<real_t>(gc.C), P()->gate_C_K);
+    real_t gateC = P()->use_local_counts ? 1.0 : Sat(static_cast<real_t>(cnt.C), P()->gate_C_K);
     real_t die = P()->e_base_death
-               + P()->e_inact_by_C * Sat(static_cast<real_t>(gc.C), P()->e_inact_by_C_K) * gateC
-               + P()->e_suppr_by_R * Sat(static_cast<real_t>(gc.R), P()->e_suppr_by_R_K) * gateC;
+               + P()->e_inact_by_C * Sat(static_cast<real_t>(cnt.C), P()->e_inact_by_C_K) * gateC
+               + P()->e_suppr_by_R * Sat(static_cast<real_t>(cnt.R), P()->e_suppr_by_R_K) * gateC;
 
-    die *= static_cast<real_t>(gc.E) / (gc.E + 1.0);
-    // die *= std::pow(static_cast<real_t>(gc.E) / (gc.E + 50), 0.5);
+    // small nonlinearity to avoid instant wipeout at tiny counts
+    die *= static_cast<real_t>(cnt.E) / (cnt.E + 1.0);
 
     if (rng->Uniform(0,1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(e->GetUid());
@@ -374,22 +425,19 @@ class NKBehavior : public Behavior {
     auto* rng = Simulation::GetActive()->GetRandom();
     n->SetPosition(ClampPoint(n->GetPosition()));
 
-    auto& gc = GlobalCensus::Instance();
-    gc.RefreshIfNeeded();
-
     const real_t dt_day = P()->dt_minutes / 1440.0;
+    const Counts cnt = GetRelevantCounts(*n);
 
-    real_t crowdN = 1.0 - Clamp(static_cast<real_t>(gc.N) / std::max<real_t>(1.0, P()->K_N), 0.0, 1.0);
-    real_t helpH  = P()->n_help_from_H * Sat(static_cast<real_t>(gc.H), P()->n_help_from_H_K);
+    real_t crowdN = 1.0 - Clamp(static_cast<real_t>(cnt.N) / std::max<real_t>(1.0, P()->K_N), 0.0, 1.0);
+    real_t helpH  = P()->n_help_from_H * Sat(static_cast<real_t>(cnt.H), P()->n_help_from_H_K);
     real_t birth  = (P()->n_base_birth + helpH) * crowdN;
 
-    real_t gateC = Sat(static_cast<real_t>(gc.C), P()->gate_C_K);
+    real_t gateC = P()->use_local_counts ? 1.0 : Sat(static_cast<real_t>(cnt.C), P()->gate_C_K);
     real_t die = P()->n_base_death
-               + P()->n_inact_by_C * Sat(static_cast<real_t>(gc.C), P()->n_inact_by_C_K) * gateC
-               + P()->n_suppr_by_R * Sat(static_cast<real_t>(gc.R), P()->n_suppr_by_R_K) * gateC;
+               + P()->n_inact_by_C * Sat(static_cast<real_t>(cnt.C), P()->n_inact_by_C_K) * gateC
+               + P()->n_suppr_by_R * Sat(static_cast<real_t>(cnt.R), P()->n_suppr_by_R_K) * gateC;
 
-    die *= static_cast<real_t>(gc.N) / (gc.N + 1.0);
-    // die *= std::pow(static_cast<real_t>(gc.N) / (gc.N + 20), 0.5);
+    die *= static_cast<real_t>(cnt.N) / (cnt.N + 1.0);
 
     if (rng->Uniform(0,1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(n->GetUid());
@@ -414,29 +462,16 @@ class HelperBehavior : public Behavior {
     auto* rng = Simulation::GetActive()->GetRandom();
     h->SetPosition(ClampPoint(h->GetPosition()));
 
-    auto& gc = GlobalCensus::Instance();
-    gc.RefreshIfNeeded();
-
     const real_t dt_day = P()->dt_minutes / 1440.0;
+    const Counts cnt = GetRelevantCounts(*h);
 
-    real_t crowdH = 1.0 - Clamp(static_cast<real_t>(gc.H) / std::max<real_t>(1.0, P()->K_H), 0.0, 1.0);
-    real_t self   = P()->h_self_act * Sat(static_cast<real_t>(gc.H), P()->h_self_act_K);
+    real_t crowdH = 1.0 - Clamp(static_cast<real_t>(cnt.H) / std::max<real_t>(1.0, P()->K_H), 0.0, 1.0);
+    real_t self   = P()->h_self_act * Sat(static_cast<real_t>(cnt.H), P()->h_self_act_K);
     real_t birth  = (P()->h_base_birth + self) * crowdH;
 
-    real_t gateC = Sat(static_cast<real_t>(gc.C), P()->gate_C_K);
+    real_t gateC = P()->use_local_counts ? 1.0 : Sat(static_cast<real_t>(cnt.C), P()->gate_C_K);
     real_t die = P()->h_base_death
-               + P()->h_suppr_by_R * Sat(static_cast<real_t>(gc.R), P()->h_suppr_by_R_K) * gateC;
-
-
-    // {
-    //   std::ostringstream ss;
-    //   // std::cout << "div_rate" << div_rate << ", p_kill " << p_kill << "\n";
-    //   ss << "[H] step=" << Simulation::GetActive()->GetScheduler()->GetSimulatedSteps()
-    //      << " birth=" << birth << " die=" << die << "\n";
-    //   std::lock_guard<std::mutex> lock(cout_mtx);
-    //   std::cout << ss.str();       // serialized
-    //   std::cout.flush();
-    // }
+               + P()->h_suppr_by_R * Sat(static_cast<real_t>(cnt.R), P()->h_suppr_by_R_K) * gateC;
 
     if (rng->Uniform(0,1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(h->GetUid());
@@ -461,20 +496,17 @@ class TRegBehavior : public Behavior {
     auto* rng = Simulation::GetActive()->GetRandom();
     r->SetPosition(ClampPoint(r->GetPosition()));
 
-    auto& gc = GlobalCensus::Instance();
-    gc.RefreshIfNeeded();
-
     const real_t dt_day = P()->dt_minutes / 1440.0;
+    const Counts cnt = GetRelevantCounts(*r);
 
-    // R rises from baseline source + induction by global E and H
-    real_t crowdR = 1.0 - Clamp(static_cast<real_t>(gc.R) / std::max<real_t>(1.0, P()->K_R), 0.0, 1.0);
+    real_t crowdR = 1.0 - Clamp(static_cast<real_t>(cnt.R) / std::max<real_t>(1.0, P()->K_R), 0.0, 1.0);
     real_t birth  = (P()->r_base_src
-                  +  P()->r_induced_by_E * Sat(static_cast<real_t>(gc.E), P()->r_induced_by_E_K)
-                  +  P()->r_induced_by_H * Sat(static_cast<real_t>(gc.H), P()->r_induced_by_H_K))
+                  +  P()->r_induced_by_E * Sat(static_cast<real_t>(cnt.E), P()->r_induced_by_E_K)
+                  +  P()->r_induced_by_H * Sat(static_cast<real_t>(cnt.H), P()->r_induced_by_H_K))
                   *  crowdR;
 
     real_t die    = P()->r_decay
-                  + P()->r_cleared_by_N * Sat(static_cast<real_t>(gc.N), P()->r_cleared_by_N_K);
+                  + P()->r_cleared_by_N * Sat(static_cast<real_t>(cnt.N), P()->r_cleared_by_N_K);
 
     if (rng->Uniform(0,1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(r->GetUid());
@@ -490,9 +522,9 @@ class TRegBehavior : public Behavior {
   }
 };
 
-// -------------------------------------------------------
-// Reporter (daily CSV based on global counts)
-// -------------------------------------------------------
+// ============================================================================
+// Reporter (daily CSV)
+// ============================================================================
 class ReporterCell : public Cell {
   BDM_AGENT_HEADER(ReporterCell, Cell, 1);
  public:
@@ -524,7 +556,9 @@ class ReportPopCounts : public Behavior {
       csv << "step,days,C,P,E,N,H,R,total\n";
       wrote_header = true;
     }
-    if (steps % static_cast<size_t>(1440.0 / std::max<real_t>(1.0, P()->dt_minutes)) == 0) {
+    // write once per day
+    size_t steps_per_day = static_cast<size_t>(1440.0 / std::max<real_t>(1.0, P()->dt_minutes));
+    if (steps % std::max<size_t>(steps_per_day, 1) == 0) {
       std::cout << "[day " << t_day << "] C=" << C << " P=" << Pn
                 << " E=" << E << " N=" << N << " H=" << H << " R=" << R << "\n";
       csv << steps << "," << t_day << ","
@@ -535,18 +569,26 @@ class ReportPopCounts : public Behavior {
   }
 };
 
-// -------------------------------------------------------
+// ============================================================================
 // Simulate
-// -------------------------------------------------------
+// ============================================================================
 inline int Simulate(int argc, const char** argv) {
   auto setp = [](Param* param) {
     param->bound_space = Param::BoundSpaceMode::kClosed;
     param->min_bound = P()->min_bound;
     param->max_bound = P()->max_bound;
-    param->simulation_time_step = P()->dt_minutes; // minutes
+    param->simulation_time_step = P()->dt_minutes; // minutes per step
+    // ensure neighbor search can cover local_radius_um safely
+   
   };
 
   Simulation sim(argc, argv, setp);
+
+  // If using local neighborhoods, convert carrying capacities to *local* caps
+  if (P()->use_local_counts) {
+    P()->RecomputeCapsForLocal();
+  }
+
   auto* ctxt = sim.GetExecutionContext();
   auto* rng  = sim.GetRandom();
 
@@ -594,14 +636,14 @@ inline int Simulate(int argc, const char** argv) {
     ctxt->AddAgent(r);
   }
 
-  // Reporter
+  // Reporter agent
   auto* rep = new ReporterCell();
   rep->AddBehavior(new ReportPopCounts());
-  sim.GetExecutionContext()->AddAgent(rep);
+  ctxt->AddAgent(rep);
 
-  // Run ~100 days (1 min step → 1440 steps per day)
+  // Simulate ~100 days (1 min step ⇒ 1440 steps/day)
   sim.GetScheduler()->Simulate(1440 * 100);
-  std::cout << "Pancreatic tumor (C,P,E,N,H,R) ABM (global interactions) completed.\n";
+  std::cout << "Pancreatic tumor ABM (global/local switch) completed.\n";
   return 0;
 }
 
