@@ -33,22 +33,22 @@ struct Params {
 
   // Initial agent counts (small ABM)
   size_t C0 = 474;  // Tumor
-  size_t P0 = 10;   // PSC
+  size_t P0 = 2;   // PSC
   size_t E0 = 431;  // CD8+
   size_t N0 = 189;  // NK
   size_t H0 = 839;  // Helper T
   size_t R0 = 65;   // Tregs
 
   // Global carrying capacities (agents): logistic crowding per type uses these
-  real_t K_C = 3000.0;
-  real_t K_P = 3000.0;
+  real_t K_C = 7500.0;
+  real_t K_P = 4500.0;
   real_t K_E = 3000.0;
   real_t K_N = 3000.0;
   real_t K_H = 4000.0;
   real_t K_R = 3500.0;
 
   // Global gating: immune suppression becomes strong only when tumor is large
-  real_t gate_C_K     = 1000.0;    // half-saturation on global C
+  real_t gate_C_K     = 500.0;    // half-saturation on global C
 
   // Generic half-sats for saturated interactions (in global agent counts)
   real_t K_small = 200.0;
