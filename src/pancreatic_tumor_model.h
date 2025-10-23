@@ -22,7 +22,7 @@ struct Params {
   // --- time & space ---
   real_t dt_minutes      = 1.0;    // scheduler step (minutes)
   real_t min_bound       = 0.0;
-  real_t max_bound       = 100.0;
+  real_t max_bound       = 150.0;
   real_t cell_radius_um  = 6.0;
 
   // --- interaction mode ---
