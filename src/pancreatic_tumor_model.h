@@ -56,7 +56,7 @@ struct Params {
   real_t K_big   = 1200.0;
 
   // ================= Tumor (C) =================
-  real_t c_base_div      = 0.05;   // baseline division
+  real_t c_base_div      = 0.10;   // baseline division
   real_t c_boost_from_P  = 0.25;   // P → C proliferative boost
   real_t c_boost_from_P_K= 800.0;  // global P half-sat for boost
   real_t c_kill_by_E     = 0.012;  // E→C killing
@@ -66,17 +66,17 @@ struct Params {
   real_t c_R_blocks_E    = 0.10;   // 1/(1 + alpha * R) reduces E-kill
 
   // ================= PSC (P) =================
-  real_t p_base_div      = 0.08;
+  real_t p_base_div      = 0.12;
   real_t p_boost_from_C  = 0.10;   // strong C → P boost
-  real_t p_boost_from_C_K= 1000.0; // later boost onset (global)
+  real_t p_boost_from_C_K= 500.0; // later boost onset (global)
   real_t p_base_death    = 0.05;
 
   // ================= Effector T (E) =================
   real_t e_base_birth    = 0.035;
   real_t e_help_from_H   = 0.22;   // H → E help
-  real_t e_help_from_H_K = 600.0;  // global H half-sat
-  real_t e_inact_by_C    = 0.15;  // C → E inactivation
-  real_t e_inact_by_C_K  = 600.0;  // global C half-sat
+  real_t e_help_from_H_K = 500.0;  // global H half-sat
+  real_t e_inact_by_C    = 0.20;  // C → E inactivation
+  real_t e_inact_by_C_K  = 400.0;  // global C half-sat
   real_t e_suppr_by_R    = 0.04;  // R → E suppression (gated by C)
   real_t e_suppr_by_R_K  = 500.0;  // global R half-sat
   real_t e_base_death    = 0.1;
@@ -84,9 +84,9 @@ struct Params {
   // ================= NK (N) =================
   real_t n_base_birth    = 0.03;
   real_t n_help_from_H   = 0.15;
-  real_t n_help_from_H_K = 600.0;
-  real_t n_inact_by_C    = 0.05;
-  real_t n_inact_by_C_K  = 600.0;
+  real_t n_help_from_H_K = 500.0;
+  real_t n_inact_by_C    = 0.08;
+  real_t n_inact_by_C_K  = 400.0;
   real_t n_suppr_by_R    = 0.038; // gated by C
   real_t n_suppr_by_R_K  = 500.0;
   real_t n_base_death    = 0.09;
@@ -525,9 +525,9 @@ class ReportPopCounts : public Behavior {
       wrote_header = true;
     }
     if (steps % static_cast<size_t>(1440.0 / std::max<real_t>(1.0, P()->dt_minutes)) == 0) {
-      std::cout << "[day " << t_day << "] C=" << C << " P=" << Pn
+      std::cout << "[day " << t_day + 7 << "] C=" << C << " P=" << Pn
                 << " E=" << E << " N=" << N << " H=" << H << " R=" << R << "\n";
-      csv << steps << "," << t_day << ","
+      csv << steps << "," << t_day + 7 << ","
           << C << "," << Pn << "," << E << "," << N << "," << H << "," << R << ","
           << (C+Pn+E+N+H+R) << "\n";
       csv.flush();
@@ -600,7 +600,7 @@ inline int Simulate(int argc, const char** argv) {
   sim.GetExecutionContext()->AddAgent(rep);
 
   // Run ~100 days (1 min step → 1440 steps per day)
-  sim.GetScheduler()->Simulate(1440 * 100);
+  sim.GetScheduler()->Simulate(1440 * 93);
   std::cout << "Pancreatic tumor (C,P,E,N,H,R) ABM (global interactions) completed.\n";
   return 0;
 }
