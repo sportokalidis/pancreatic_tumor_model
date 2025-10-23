@@ -561,7 +561,7 @@ class ReportPopCounts : public Behavior {
     if (steps % std::max<size_t>(steps_per_day, 1) == 0) {
       std::cout << "[day " << t_day << "] C=" << C << " P=" << Pn
                 << " E=" << E << " N=" << N << " H=" << H << " R=" << R << "\n";
-      csv << steps << "," << t_day << ","
+      csv << steps << "," << t_day + 7 << ","
           << C << "," << Pn << "," << E << "," << N << "," << H << "," << R << ","
           << (C+Pn+E+N+H+R) << "\n";
       csv.flush();
@@ -641,9 +641,9 @@ inline int Simulate(int argc, const char** argv) {
   rep->AddBehavior(new ReportPopCounts());
   ctxt->AddAgent(rep);
 
-  // Simulate ~100 days (1 min step ⇒ 1440 steps/day)
-  sim.GetScheduler()->Simulate(1440 * 100);
-  std::cout << "Pancreatic tumor ABM (global/local switch) completed.\n";
+  // Run ~100 days (1 min step → 1440 steps per day)
+  sim.GetScheduler()->Simulate(1440 * 93);
+  std::cout << "Pancreatic tumor (C,P,E,N,H,R) ABM (global interactions) completed.\n";
   return 0;
 }
 
