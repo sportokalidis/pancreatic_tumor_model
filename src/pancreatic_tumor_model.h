@@ -31,7 +31,7 @@ struct Params {
 
   // --- initial counts ---
   size_t C0 = 474;  // Tumor (C)
-  size_t P0 = 10;   // PSC (P)
+  size_t P0 = 2;   // PSC (P)
   size_t E0 = 431;  // CD8+ Effector (E)
   size_t N0 = 189;  // NK (N)
   size_t H0 = 839;  // Helper (H)
@@ -39,8 +39,8 @@ struct Params {
 
   // --- carrying capacities (used in crowding) ---
   // In global mode: these are global caps. In local mode: they are recomputed.
-  real_t K_C = 3000.0;
-  real_t K_P = 3000.0;
+  real_t K_C = 7500.0;
+  real_t K_P = 4500.0;
   real_t K_E = 3000.0;
   real_t K_N = 3000.0;
   real_t K_H = 4000.0;
@@ -49,7 +49,7 @@ struct Params {
   // --- local-capacity estimation knobs (only used if use_local_counts=true) ---
   real_t packing_fraction = 0.64;   // random-close packing for spheres
   real_t capacity_margin  = 0.75;   // conservative margin
-  bool   lock_equal_caps  = false;   // one K for all types
+  bool   lock_equal_caps  = true;   // one K for all types
   size_t min_local_K      = 10;     // never go below this
 
   // Recompute Ks for local mode from radius and cell size
@@ -72,7 +72,7 @@ struct Params {
   }
 
   // --- smooth gates / half-saturation for global signals ---
-  real_t gate_C_K = 1000.0; // gate strength from tumor size
+  real_t gate_C_K = 500.0; // gate strength from tumor size
 
   // generic half-sats if needed elsewhere
   real_t K_small = 200.0;
@@ -80,56 +80,56 @@ struct Params {
   real_t K_big   = 1200.0;
 
   // ================= Tumor (C) =================
-  real_t c_base_div      = 0.05;   // per day
-  real_t c_boost_from_P  = 0.25;   // PSC→tumor boost
-  real_t c_boost_from_P_K= 800.0;  // half-sat (global P) OR local P count
-  real_t c_kill_by_E     = 0.012;  // E kills C
-  real_t c_kill_by_E_K   = 600.0;  // half-sat
-  real_t c_kill_by_N     = 0.007;  // N kills C
-  real_t c_kill_by_N_K   = 600.0;  // half-sat
-  real_t c_R_blocks_E    = 0.10;   // E effectiveness reduced by R
+  real_t c_base_div      = 0.10;   // baseline division
+  real_t c_boost_from_P  = 0.25;   // P → C proliferative boost
+  real_t c_boost_from_P_K= 800.0;  // global P half-sat for boost
+  real_t c_kill_by_E     = 0.012;  // E→C killing
+  real_t c_kill_by_E_K   = 600.0;  // global E half-sat
+  real_t c_kill_by_N     = 0.007;  // N→C killing
+  real_t c_kill_by_N_K   = 600.0;  // global N half-sat
+  real_t c_R_blocks_E    = 0.10;   // 1/(1 + alpha * R) reduces E-kill
 
   // ================= PSC (P) =================
-  real_t p_base_div      = 0.08;
-  real_t p_boost_from_C  = 0.25;    // C→P boost
-  real_t p_boost_from_C_K= 5.0;
+  real_t p_base_div      = 0.12;
+  real_t p_boost_from_C  = 0.10;   // strong C → P boost
+  real_t p_boost_from_C_K= 500.0; // later boost onset (global)
   real_t p_base_death    = 0.05;
 
   // ================= Effector T (E) =================
   real_t e_base_birth    = 0.035;
-  real_t e_help_from_H   = 0.22;    // H→E help
-  real_t e_help_from_H_K = 5.0;
-  real_t e_inact_by_C    = 0.15;    // C inactivation on E
-  real_t e_inact_by_C_K  = 5.0;
-  real_t e_suppr_by_R    = 0.04;    // R suppress E
-  real_t e_suppr_by_R_K  = 5.0;
-  real_t e_base_death    = 0.15;
+  real_t e_help_from_H   = 0.22;   // H → E help
+  real_t e_help_from_H_K = 500.0;  // global H half-sat
+  real_t e_inact_by_C    = 0.20;  // C → E inactivation
+  real_t e_inact_by_C_K  = 400.0;  // global C half-sat
+  real_t e_suppr_by_R    = 0.04;  // R → E suppression (gated by C)
+  real_t e_suppr_by_R_K  = 500.0;  // global R half-sat
+  real_t e_base_death    = 0.1;
 
   // ================= NK (N) =================
   real_t n_base_birth    = 0.03;
   real_t n_help_from_H   = 0.15;
-  real_t n_help_from_H_K = 5.0;
-  real_t n_inact_by_C    = 0.15;
-  real_t n_inact_by_C_K  = 5.0;
-  real_t n_suppr_by_R    = 0.038;
-  real_t n_suppr_by_R_K  = 5.0;
-  real_t n_base_death    = 0.12;
+  real_t n_help_from_H_K = 500.0;
+  real_t n_inact_by_C    = 0.08;
+  real_t n_inact_by_C_K  = 400.0;
+  real_t n_suppr_by_R    = 0.038; // gated by C
+  real_t n_suppr_by_R_K  = 500.0;
+  real_t n_base_death    = 0.09;
 
   // ================= Helper T (H) =================
   real_t h_base_birth    = 0.05;
   real_t h_self_act      = 0.09;
-  real_t h_self_act_K    = 5.0;
-  real_t h_suppr_by_R    = 0.075;
-  real_t h_suppr_by_R_K  = 5.0;
-  real_t h_base_death    = 0.05;
+  real_t h_self_act_K    = 1000.0; // weak self-activation, global
+  real_t h_suppr_by_R    = 0.075; // gated by C
+  real_t h_suppr_by_R_K  = 700.0;
+  real_t h_base_death    = 0.08;
 
   // ================= Tregs (R) =================
   real_t r_base_src      = 0.08;
-  real_t r_induced_by_E  = 0.008;
+  real_t r_induced_by_E  = 0.008;  // E → R induction
   real_t r_induced_by_E_K= 600.0;
-  real_t r_induced_by_H  = 0.008;
+  real_t r_induced_by_H  = 0.008;  // H → R induction
   real_t r_induced_by_H_K= 600.0;
-  real_t r_cleared_by_N  = 0.003;
+  real_t r_cleared_by_N  = 0.003;  // N → R clearance
   real_t r_cleared_by_N_K= 500.0;
   real_t r_decay         = 0.06;
 
