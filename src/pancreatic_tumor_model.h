@@ -49,8 +49,8 @@ struct Params {
   // --- local-capacity estimation knobs (only used if use_local_counts=true) ---
   real_t packing_fraction = 0.64;   // random-close packing for spheres
   real_t capacity_margin  = 0.75;   // conservative margin
-  bool   lock_equal_caps  = true;   // one K for all types
-  size_t min_local_K      = 10;     // never go below this
+  bool   lock_equal_caps  = false;   // one K for all types
+  size_t min_local_K      = 20;     // never go below this
 
   // Recompute Ks for local mode from radius and cell size
   void RecomputeCapsForLocal() {
@@ -72,7 +72,7 @@ struct Params {
   }
 
   // --- smooth gates / half-saturation for global signals ---
-  real_t gate_C_K = 500.0; // gate strength from tumor size
+  real_t gate_C_K = 3.0; // gate strength from tumor size
 
   // generic half-sats if needed elsewhere
   real_t K_small = 200.0;
@@ -91,46 +91,46 @@ struct Params {
 
   // ================= PSC (P) =================
   real_t p_base_div      = 0.12;
-  real_t p_boost_from_C  = 0.10;   // strong C → P boost
-  real_t p_boost_from_C_K= 500.0; // later boost onset (global)
+  real_t p_boost_from_C  = 0.40;   // strong C → P boost
+  real_t p_boost_from_C_K= 3.0; // later boost onset (global)
   real_t p_base_death    = 0.05;
 
   // ================= Effector T (E) =================
   real_t e_base_birth    = 0.035;
   real_t e_help_from_H   = 0.22;   // H → E help
-  real_t e_help_from_H_K = 500.0;  // global H half-sat
-  real_t e_inact_by_C    = 0.20;  // C → E inactivation
-  real_t e_inact_by_C_K  = 400.0;  // global C half-sat
+  real_t e_help_from_H_K = 3.0;  // global H half-sat
+  real_t e_inact_by_C    = 0.10;  // C → E inactivation
+  real_t e_inact_by_C_K  = 1.0;  // global C half-sat
   real_t e_suppr_by_R    = 0.04;  // R → E suppression (gated by C)
-  real_t e_suppr_by_R_K  = 500.0;  // global R half-sat
-  real_t e_base_death    = 0.1;
+  real_t e_suppr_by_R_K  = 1.0;  // global R half-sat
+  real_t e_base_death    = 0.08;
 
   // ================= NK (N) =================
   real_t n_base_birth    = 0.03;
   real_t n_help_from_H   = 0.15;
-  real_t n_help_from_H_K = 500.0;
+  real_t n_help_from_H_K = 3.0;
   real_t n_inact_by_C    = 0.08;
-  real_t n_inact_by_C_K  = 400.0;
+  real_t n_inact_by_C_K  = 1.0;
   real_t n_suppr_by_R    = 0.038; // gated by C
-  real_t n_suppr_by_R_K  = 500.0;
-  real_t n_base_death    = 0.09;
+  real_t n_suppr_by_R_K  = 1.0;
+  real_t n_base_death    = 0.04;
 
   // ================= Helper T (H) =================
   real_t h_base_birth    = 0.05;
   real_t h_self_act      = 0.09;
-  real_t h_self_act_K    = 1000.0; // weak self-activation, global
+  real_t h_self_act_K    = 3.0; // weak self-activation, global
   real_t h_suppr_by_R    = 0.075; // gated by C
-  real_t h_suppr_by_R_K  = 700.0;
+  real_t h_suppr_by_R_K  = 3.0;
   real_t h_base_death    = 0.08;
 
   // ================= Tregs (R) =================
   real_t r_base_src      = 0.08;
   real_t r_induced_by_E  = 0.008;  // E → R induction
-  real_t r_induced_by_E_K= 600.0;
+  real_t r_induced_by_E_K= 3.0;
   real_t r_induced_by_H  = 0.008;  // H → R induction
-  real_t r_induced_by_H_K= 600.0;
+  real_t r_induced_by_H_K= 3.0;
   real_t r_cleared_by_N  = 0.003;  // N → R clearance
-  real_t r_cleared_by_N_K= 500.0;
+  real_t r_cleared_by_N_K= 3.0;
   real_t r_decay         = 0.06;
 
   // --- Colors (UI) ---
@@ -358,7 +358,7 @@ class PSCBehavior : public Behavior {
 
     const real_t dt_day = P()->dt_minutes / 1440.0;
     const Counts cnt = GetRelevantCounts(*psc);
-
+    // std::cout << "PSC counts: C=" << cnt.C << " P=" << cnt.P << "\n";
     real_t crowd  = 1.0 - Clamp(static_cast<real_t>(cnt.P) / std::max<real_t>(1.0, P()->K_P), 0.0, 1.0);
     real_t boostC = P()->p_boost_from_C * Sat(static_cast<real_t>(cnt.C), P()->p_boost_from_C_K);
     real_t div_rate = (P()->p_base_div + boostC) * crowd;
@@ -400,7 +400,7 @@ class EffectorBehavior : public Behavior {
                + P()->e_suppr_by_R * Sat(static_cast<real_t>(cnt.R), P()->e_suppr_by_R_K) * gateC;
 
     // small nonlinearity to avoid instant wipeout at tiny counts
-    die *= static_cast<real_t>(cnt.E) / (cnt.E + 1.0);
+    // die *= static_cast<real_t>(cnt.E) / (cnt.E + 1.0);
 
     if (rng->Uniform(0,1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(e->GetUid());
@@ -437,7 +437,7 @@ class NKBehavior : public Behavior {
                + P()->n_inact_by_C * Sat(static_cast<real_t>(cnt.C), P()->n_inact_by_C_K) * gateC
                + P()->n_suppr_by_R * Sat(static_cast<real_t>(cnt.R), P()->n_suppr_by_R_K) * gateC;
 
-    die *= static_cast<real_t>(cnt.N) / (cnt.N + 1.0);
+    // die *= static_cast<real_t>(cnt.N) / (cnt.N + 1.0);
 
     if (rng->Uniform(0,1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(n->GetUid());
