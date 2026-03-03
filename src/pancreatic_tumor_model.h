@@ -232,6 +232,10 @@ struct Params {
     if (key == "n_base_death") { n_base_death = value; return true; }
     if (key == "r_base_src") { r_base_src = value; return true; }
     if (key == "r_decay") { r_decay = value; return true; }
+    if (key == "c_boost_from_P") { c_boost_from_P = value; return true; }
+    if (key == "p_boost_from_C") { p_boost_from_C = value; return true; }
+    if (key == "e_inact_by_C")   { e_inact_by_C = value; return true; }
+    if (key == "e_suppr_by_R")   { e_suppr_by_R = value; return true; }
 
     // Useful toggles
     if (key == "use_local_counts") { use_local_counts = (value != 0.0); return true; }
@@ -313,6 +317,10 @@ inline void WriteRunParamsFile() {
   out << SRCfg().run_id << "," << SRCfg().seed << ",n_base_death," << P()->n_base_death << "\n";
   out << SRCfg().run_id << "," << SRCfg().seed << ",r_base_src," << P()->r_base_src << "\n";
   out << SRCfg().run_id << "," << SRCfg().seed << ",r_decay," << P()->r_decay << "\n";
+  out << SRCfg().run_id << "," << SRCfg().seed << ",c_boost_from_P," << P()->c_boost_from_P << "\n";
+  out << SRCfg().run_id << "," << SRCfg().seed << ",p_boost_from_C," << P()->p_boost_from_C << "\n";
+  out << SRCfg().run_id << "," << SRCfg().seed << ",e_inact_by_C," << P()->e_inact_by_C << "\n";
+  out << SRCfg().run_id << "," << SRCfg().seed << ",e_suppr_by_R," << P()->e_suppr_by_R << "\n";
 
   // Record explicit overrides (debug-friendly)
   for (const auto& o : AppliedOverrides()) {
@@ -818,8 +826,8 @@ class ReportPopCounts : public Behavior {
               << " N=" << N << " H=" << H << " R=" << R << "\n";
 
     // Only store rows at target days
-    const auto& days = SRCfg().sample_days;
-    if (std::find(days.begin(), days.end(), model_day) == days.end()) return;
+    // const auto& days = SRCfg().sample_days;
+    // if (std::find(days.begin(), days.end(), model_day) == days.end()) return;
 
     std::filesystem::create_directories(SRCfg().out_dir);
 

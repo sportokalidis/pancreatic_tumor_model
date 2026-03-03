@@ -1,5 +1,7 @@
 build/
 output/
+data-export/sens/
+data-export/sens_oat/
 
 **/.DS_Store
 
