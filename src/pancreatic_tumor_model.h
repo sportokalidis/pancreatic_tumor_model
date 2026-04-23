@@ -97,22 +97,25 @@ struct Params {
 
   // ================= Effector T (E) =================
   real_t e_base_birth    = 0.035;
-  real_t e_help_from_H   = 0.22;   // H → E help
-  real_t e_help_from_H_K = 3.0;  // global H half-sat
-  real_t e_inact_by_C    = 0.10;  // C → E inactivation
-  real_t e_inact_by_C_K  = 1.0;  // global C half-sat
-  real_t e_suppr_by_R    = 0.04;  // R → E suppression (gated by C)
-  real_t e_suppr_by_R_K  = 1.0;  // global R half-sat
+  real_t e_help_from_H   = 0.22;   // p_e H/(g_e+H): Helper boost
+  real_t e_help_from_H_K = 3.0;
+  real_t e_recruit_from_NC   = 0.006;  // r_e NC: E recruited via NK-tumor interaction (Eq 2.3)
+  real_t e_recruit_from_NC_K_N = 80.0; // half-sat for N in recruitment
+  real_t e_recruit_from_NC_K_C = 800.0;// half-sat for C in recruitment
+  real_t e_inact_by_C    = 0.10;  // c_e C: tumor inactivates E
+  real_t e_inact_by_C_K  = 800.0; // half-sat in working range of C (was 1.0 → always saturated)
+  real_t e_suppr_by_R    = 0.04;  // δ_e R: Treg suppression
+  real_t e_suppr_by_R_K  = 150.0; // half-sat in working range of R (was 1.0 → always saturated)
   real_t e_base_death    = 0.08;
 
   // ================= NK (N) =================
   real_t n_base_birth    = 0.03;
   real_t n_help_from_H   = 0.15;
   real_t n_help_from_H_K = 3.0;
-  real_t n_inact_by_C    = 0.08;
-  real_t n_inact_by_C_K  = 1.0;
-  real_t n_suppr_by_R    = 0.038; // gated by C
-  real_t n_suppr_by_R_K  = 1.0;
+  real_t n_inact_by_C    = 0.08;  // c_n C: NK lost from tumor interaction
+  real_t n_inact_by_C_K  = 800.0; // half-sat in working range of C (was 1.0 → always saturated)
+  real_t n_suppr_by_R    = 0.038; // δ_n R: Treg suppression
+  real_t n_suppr_by_R_K  = 150.0; // half-sat in working range of R (was 1.0 → always saturated)
   real_t n_base_death    = 0.04;
 
   // ================= Helper T (H) =================
@@ -125,11 +128,13 @@ struct Params {
 
   // ================= Tregs (R) =================
   real_t r_base_src      = 0.08;
-  real_t r_induced_by_E  = 0.008;  // E → R induction
+  real_t r_induced_by_E  = 0.008;  // a_r E: E → R induction
   real_t r_induced_by_E_K= 3.0;
-  real_t r_induced_by_H  = 0.008;  // H → R induction
+  real_t r_induced_by_H  = 0.008;  // b_r H: H → R linear induction
   real_t r_induced_by_H_K= 3.0;
-  real_t r_cleared_by_N  = 0.003;  // N → R clearance
+  real_t r_reinforce_by_H   = 0.04;   // p_r H/(g_r+H): H-mediated Treg self-amplification (Eq 2.6)
+  real_t r_reinforce_by_H_K = 300.0;  // g_r in ABM-scale (~H working range)
+  real_t r_cleared_by_N  = 0.003;  // r N: N → R clearance
   real_t r_cleared_by_N_K= 3.0;
   real_t r_decay         = 0.06;
 
@@ -392,7 +397,11 @@ class EffectorBehavior : public Behavior {
 
     real_t crowdE = 1.0 - Clamp(static_cast<real_t>(cnt.E) / std::max<real_t>(1.0, P()->K_E), 0.0, 1.0);
     real_t helpH  = P()->e_help_from_H * Sat(static_cast<real_t>(cnt.H), P()->e_help_from_H_K);
-    real_t birth  = (P()->e_base_birth + helpH) * crowdE;
+    // Eq 2.3 r_e NC term: E recruited by NK-tumor interaction
+    real_t recruitNC = P()->e_recruit_from_NC
+                     * Sat(static_cast<real_t>(cnt.N), P()->e_recruit_from_NC_K_N)
+                     * Sat(static_cast<real_t>(cnt.C), P()->e_recruit_from_NC_K_C);
+    real_t birth  = (P()->e_base_birth + helpH + recruitNC) * crowdE;
 
     real_t gateC = P()->use_local_counts ? 1.0 : Sat(static_cast<real_t>(cnt.C), P()->gate_C_K);
     real_t die = P()->e_base_death
@@ -500,9 +509,11 @@ class TRegBehavior : public Behavior {
     const Counts cnt = GetRelevantCounts(*r);
 
     real_t crowdR = 1.0 - Clamp(static_cast<real_t>(cnt.R) / std::max<real_t>(1.0, P()->K_R), 0.0, 1.0);
+    // Eq 2.6: a + a_r E + b_r H + p_r H/(g_r+H) source terms per Treg
     real_t birth  = (P()->r_base_src
-                  +  P()->r_induced_by_E * Sat(static_cast<real_t>(cnt.E), P()->r_induced_by_E_K)
-                  +  P()->r_induced_by_H * Sat(static_cast<real_t>(cnt.H), P()->r_induced_by_H_K))
+                  +  P()->r_induced_by_E  * Sat(static_cast<real_t>(cnt.E), P()->r_induced_by_E_K)
+                  +  P()->r_induced_by_H  * Sat(static_cast<real_t>(cnt.H), P()->r_induced_by_H_K)
+                  +  P()->r_reinforce_by_H * Sat(static_cast<real_t>(cnt.H), P()->r_reinforce_by_H_K))
                   *  crowdR;
 
     real_t die    = P()->r_decay
