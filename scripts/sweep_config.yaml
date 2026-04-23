@@ -1,0 +1,30 @@
+# Pancreatic Tumor ABM — parameter sweep config
+# Usage: make sweep CONFIG=scripts/sweep_config.yaml
+#
+# Each run patches real_t fields in src/pancreatic_tumor_model.h, builds,
+# simulates, computes fit metrics, and archives to results/<name>/.
+# The header is always restored after each run, even on failure.
+
+runs:
+  - name: baseline
+    params: {}   # use header defaults as-is
+
+  - name: high_treg_reinforce
+    params:
+      r_reinforce_by_H:   0.08
+      r_reinforce_by_H_K: 200.0
+
+  - name: low_treg_reinforce
+    params:
+      r_reinforce_by_H:   0.02
+      r_reinforce_by_H_K: 400.0
+
+  - name: higher_e_inact_K
+    params:
+      e_inact_by_C_K: 1200.0
+      n_inact_by_C_K: 1200.0
+
+  - name: lower_e_inact_K
+    params:
+      e_inact_by_C_K: 400.0
+      n_inact_by_C_K: 400.0

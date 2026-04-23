@@ -55,9 +55,13 @@ GTAGS
 CMakeCache.txt
 CMakeFiles
 CMakeScripts
-Makefile
+build/Makefile
 cmake_install.cmake
 install_manifest.txt
+
+#------------------- Project --------------------
+CLAUDE.md
+*.pdf
 
 #------------------- Doxygen files --------------------
 Doxyfile
