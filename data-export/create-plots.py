@@ -1,11 +1,9 @@
-import os
 import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
 
-# Path to your folder
-folder = os.path.expanduser(
-    "~/Documents/dev/ESB-Workshop-tutorial/pancreatic_tumor_model/data-export"
-)
+# Always resolved relative to this script's location (data-export/)
+folder = Path(__file__).parent
 
 # Fixed colors per population (matches your reference figure)
 colors = {
@@ -29,14 +27,14 @@ fig, axes = plt.subplots(2, 1, figsize=(11, 10), sharex=True)
 # Plot 1: separate CSVs (original + scaled)
 # -------------------------
 for csv_file in original_csvs:
-    path = os.path.join(folder, csv_file)
+    path = folder / csv_file
     df = pd.read_csv(path, header=None, names=["Days", "Cells Population"])
     key = csv_file.split("-")[0]  # "C" from "C-Cells.csv"
     axes[0].plot(df["Days"], df["Cells Population"], label=key, color=colors[key], linewidth=2)
 
 for csv_file in scaled_csvs:
-    path = os.path.join(folder, csv_file)
-    if os.path.exists(path):
+    path = folder / csv_file
+    if path.exists():
         df = pd.read_csv(path, header=None, names=["Days", "Cells Population"])
         key = csv_file.split("-")[0]
         axes[1].plot(
@@ -54,7 +52,7 @@ axes[0].grid(True, which="both", linestyle="--", linewidth=0.5)
 # -------------------------
 # Plot 2: populations.csv (C,P,E,N,H,R vs days)
 # -------------------------
-pop_file = os.path.join(folder, "populations.csv")
+pop_file = folder / "populations.csv"
 df_pop = pd.read_csv(pop_file)
 
 for col in ["C", "P", "E", "N", "H", "R"]:
@@ -62,7 +60,7 @@ for col in ["C", "P", "E", "N", "H", "R"]:
 
 axes[1].set_xlabel("Days")
 axes[1].set_ylabel("Cells Population (log scale)")
-axes[1].set_title("Cells Population Over Time (from populations.csv)")
+axes[1].set_title("ABM simulation (solid) vs. scaled reference (dashed)")
 axes[1].set_yscale("log")
 axes[1].legend(ncol=6)
 axes[1].grid(True, which="both", linestyle="--", linewidth=0.5)

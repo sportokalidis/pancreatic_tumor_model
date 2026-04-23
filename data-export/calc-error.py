@@ -15,7 +15,7 @@ from typing import Optional
 
 
 # --------- config ---------
-BASE_DIR = Path("./data-export")  # change if needed
+BASE_DIR = Path(__file__).parent  # always resolves to data-export/ regardless of CWD
 SIM_PATH = BASE_DIR / "populations.csv"
 
 # Map: population -> (experimental CSV path, tokens to find the sim column)
