@@ -8,247 +8,215 @@
 #define PANCREATIC_TUMOR_MODEL_H_
 
 #include "biodynamo.h"
-#include <cmath>
+#include "params/sim_param.h"
+
 #include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <filesystem>
 #include <fstream>
+#include <mutex>
 
 namespace bdm {
 namespace pancreatic_tumor {
 
-// ============================================================================
-// Parameters
-// ============================================================================
-struct Params {
-  // --- time & space ---
-  real_t dt_minutes      = 1.0;    // scheduler step (minutes)
-  real_t min_bound       = 0.0;
-  real_t max_bound       = 150.0;
-  real_t cell_radius_um  = 6.0;
-
-  // --- interaction mode ---
-  bool   use_local_counts = true;  // false = global interactions, true = local
-  real_t local_radius_um  = 12.0;   // neighborhood radius if local mode
-
-  // --- initial counts ---
-  size_t C0 = 474;  // Tumor (C)
-  size_t P0 = 2;   // PSC (P)
-  size_t E0 = 431;  // CD8+ Effector (E)
-  size_t N0 = 189;  // NK (N)
-  size_t H0 = 839;  // Helper (H)
-  size_t R0 = 65;   // Tregs (R)
-
-  // --- carrying capacities (used in crowding) ---
-  // In global mode: these are global caps. In local mode: they are recomputed.
-  real_t K_C = 7500.0;
-  real_t K_P = 4500.0;
-  real_t K_E = 3000.0;
-  real_t K_N = 3000.0;
-  real_t K_H = 4000.0;
-  real_t K_R = 3500.0;
-
-  // --- local-capacity estimation knobs (only used if use_local_counts=true) ---
-  real_t packing_fraction = 0.64;   // random-close packing for spheres
-  real_t capacity_margin  = 0.75;   // conservative margin
-  bool   lock_equal_caps  = false;   // one K for all types
-  size_t min_local_K      = 20;     // never go below this
-
-  // Recompute Ks for local mode from radius and cell size
-  void RecomputeCapsForLocal() {
-    if (!use_local_counts) return;
-    const real_t r  = std::max<real_t>(local_radius_um, cell_radius_um);
-    const real_t R  = std::max<real_t>(cell_radius_um, 1.0);
-    const real_t base = packing_fraction * capacity_margin * std::pow(r / R, 3.0);
-    const real_t Kest = std::max<real_t>(std::round(base), static_cast<real_t>(min_local_K));
-    if (lock_equal_caps) {
-      K_C = K_P = K_E = K_N = K_R = K_H = Kest;
-    } else {
-      K_C = Kest;
-      K_P = Kest;
-      K_E = Kest;
-      K_N = Kest;
-      K_H = std::round(1.2 * Kest);
-      K_R = std::round(1.1 * Kest);
-    }
-  }
-
-  // --- smooth gates / half-saturation for global signals ---
-  real_t gate_C_K = 3.0; // gate strength from tumor size
-
-  // generic half-sats if needed elsewhere
-  real_t K_small = 200.0;
-  real_t K_med   = 600.0;
-  real_t K_big   = 1200.0;
-
-  // ================= Tumor (C) =================
-  real_t c_base_div      = 0.10;   // baseline division
-  real_t c_boost_from_P  = 0.25;   // P → C proliferative boost
-  real_t c_boost_from_P_K= 800.0;  // global P half-sat for boost
-  real_t c_kill_by_E     = 0.012;  // E→C killing
-  real_t c_kill_by_E_K   = 600.0;  // global E half-sat
-  real_t c_kill_by_N     = 0.007;  // N→C killing
-  real_t c_kill_by_N_K   = 600.0;  // global N half-sat
-  real_t c_R_blocks_E    = 0.10;   // 1/(1 + alpha * R) reduces E-kill
-
-  // ================= PSC (P) =================
-  real_t p_base_div      = 0.12;
-  real_t p_boost_from_C  = 0.40;   // strong C → P boost
-  real_t p_boost_from_C_K= 3.0; // later boost onset (global)
-  real_t p_base_death    = 0.05;
-
-  // ================= Effector T (E) =================
-  real_t e_base_birth    = 0.035;
-  real_t e_help_from_H   = 0.22;   // H → E help
-  real_t e_help_from_H_K = 3.0;  // global H half-sat
-  real_t e_inact_by_C    = 0.10;  // C → E inactivation
-  real_t e_inact_by_C_K  = 1.0;  // global C half-sat
-  real_t e_suppr_by_R    = 0.04;  // R → E suppression (gated by C)
-  real_t e_suppr_by_R_K  = 1.0;  // global R half-sat
-  real_t e_base_death    = 0.08;
-
-  // ================= NK (N) =================
-  real_t n_base_birth    = 0.03;
-  real_t n_help_from_H   = 0.15;
-  real_t n_help_from_H_K = 3.0;
-  real_t n_inact_by_C    = 0.08;
-  real_t n_inact_by_C_K  = 1.0;
-  real_t n_suppr_by_R    = 0.038; // gated by C
-  real_t n_suppr_by_R_K  = 1.0;
-  real_t n_base_death    = 0.04;
-
-  // ================= Helper T (H) =================
-  real_t h_base_birth    = 0.05;
-  real_t h_self_act      = 0.09;
-  real_t h_self_act_K    = 3.0; // weak self-activation, global
-  real_t h_suppr_by_R    = 0.075; // gated by C
-  real_t h_suppr_by_R_K  = 3.0;
-  real_t h_base_death    = 0.08;
-
-  // ================= Tregs (R) =================
-  real_t r_base_src      = 0.08;
-  real_t r_induced_by_E  = 0.008;  // E → R induction
-  real_t r_induced_by_E_K= 3.0;
-  real_t r_induced_by_H  = 0.008;  // H → R induction
-  real_t r_induced_by_H_K= 3.0;
-  real_t r_cleared_by_N  = 0.003;  // N → R clearance
-  real_t r_cleared_by_N_K= 3.0;
-  real_t r_decay         = 0.06;
-
-  // --- Colors (UI) ---
-  struct Colors {
-    int tumor          = 8;
-    int psc            = 4;
-    int eff            = 5;
-    int nk             = 3;
-    int helper         = 6;
-    int treg           = 1;
-    int tumor_div_tint = 7;
-  } color;
-};
-
-inline Params* P() { static Params p; return &p; }
+// Convenience accessor for SimParam — requires full BioDynaMo environment.
+// Defined here (not in sim_param.h) to avoid pulling Param's full definition
+// into the param-group header.
+inline const SimParam* SP() {
+  return Simulation::GetActive()->GetParam()->Get<SimParam>();
+}
 
 // ============================================================================
-// Helpers
+// Math helpers
 // ============================================================================
 inline real_t Clamp(real_t v, real_t lo, real_t hi) {
   return v < lo ? lo : (v > hi ? hi : v);
 }
-inline Real3 ClampPoint(const Real3& pos) {
-  return Real3{Clamp(pos[0], P()->min_bound, P()->max_bound),
-               Clamp(pos[1], P()->min_bound, P()->max_bound),
-               Clamp(pos[2], P()->min_bound, P()->max_bound)};
+inline Real3 ClampPoint(const Real3& pos, real_t lo, real_t hi) {
+  return {Clamp(pos[0], lo, hi), Clamp(pos[1], lo, hi), Clamp(pos[2], lo, hi)};
 }
-inline real_t Sat(real_t x, real_t K) { return (x <= 0) ? 0.0 : x / (K + x); }
+// Hill saturation: x / (K + x)
+inline real_t Sat(real_t x, real_t K) {
+  return (x <= 0.0) ? 0.0 : x / (K + x);
+}
+// Convert a per-day rate to a per-step probability via the exact Poisson mapping.
 inline real_t ProbFromRate(real_t rate_per_day, real_t dt_day) {
-  if (rate_per_day <= 0) return 0.0;
+  if (rate_per_day <= 0.0) return 0.0;
   return 1.0 - std::exp(-rate_per_day * dt_day);
 }
 
 // ============================================================================
 // Agent types
 // ============================================================================
+
+// Each agent stores a color_ field and implements Initialize so that daughter
+// cells inherit it correctly after Divide().  The color_ field is the only
+// custom field here — it is enough for visualization.
+
 class TumorCell : public Cell {
   BDM_AGENT_HEADER(TumorCell, Cell, 1);
+
  public:
-  TumorCell() { SetDiameter(2.0 * P()->cell_radius_um); color_ = P()->color.tumor; }
-  explicit TumorCell(const Real3& p) : TumorCell() { SetPosition(p); }
+  TumorCell() = default;
+  explicit TumorCell(const Real3& p) {
+    SetPosition(p);
+    SetDiameter(2.0 * SP()->cell_radius_um);
+    color_ = SP()->color_tumor;
+  }
+
+  void Initialize(const NewAgentEvent& event) override {
+    Base::Initialize(event);
+    color_ = bdm_static_cast<TumorCell*>(event.existing_agent)->color_;
+  }
+
   void SetCellColor(int c) { color_ = c; }
   int  GetCellColor() const { return color_; }
+
  private:
   int color_ = 0;
 };
 
 class StellateCell : public Cell {
   BDM_AGENT_HEADER(StellateCell, Cell, 1);
+
  public:
-  StellateCell() { SetDiameter(2.0 * P()->cell_radius_um); color_ = P()->color.psc; }
-  explicit StellateCell(const Real3& p) : StellateCell() { SetPosition(p); }
+  StellateCell() = default;
+  explicit StellateCell(const Real3& p) {
+    SetPosition(p);
+    SetDiameter(2.0 * SP()->cell_radius_um);
+    color_ = SP()->color_psc;
+  }
+
+  void Initialize(const NewAgentEvent& event) override {
+    Base::Initialize(event);
+    color_ = bdm_static_cast<StellateCell*>(event.existing_agent)->color_;
+  }
+
   void SetCellColor(int c) { color_ = c; }
   int  GetCellColor() const { return color_; }
+
  private:
   int color_ = 0;
 };
 
 class EffectorTCell : public Cell {
   BDM_AGENT_HEADER(EffectorTCell, Cell, 1);
+
  public:
-  EffectorTCell() { SetDiameter(2.0 * P()->cell_radius_um); color_ = P()->color.eff; }
-  explicit EffectorTCell(const Real3& p) : EffectorTCell() { SetPosition(p); }
+  EffectorTCell() = default;
+  explicit EffectorTCell(const Real3& p) {
+    SetPosition(p);
+    SetDiameter(2.0 * SP()->cell_radius_um);
+    color_ = SP()->color_eff;
+  }
+
+  void Initialize(const NewAgentEvent& event) override {
+    Base::Initialize(event);
+    color_ = bdm_static_cast<EffectorTCell*>(event.existing_agent)->color_;
+  }
+
   void SetCellColor(int c) { color_ = c; }
   int  GetCellColor() const { return color_; }
+
  private:
   int color_ = 0;
 };
 
 class NKCell : public Cell {
   BDM_AGENT_HEADER(NKCell, Cell, 1);
+
  public:
-  NKCell() { SetDiameter(2.0 * P()->cell_radius_um); color_ = P()->color.nk; }
-  explicit NKCell(const Real3& p) : NKCell() { SetPosition(p); }
+  NKCell() = default;
+  explicit NKCell(const Real3& p) {
+    SetPosition(p);
+    SetDiameter(2.0 * SP()->cell_radius_um);
+    color_ = SP()->color_nk;
+  }
+
+  void Initialize(const NewAgentEvent& event) override {
+    Base::Initialize(event);
+    color_ = bdm_static_cast<NKCell*>(event.existing_agent)->color_;
+  }
+
   void SetCellColor(int c) { color_ = c; }
   int  GetCellColor() const { return color_; }
+
  private:
   int color_ = 0;
 };
 
 class HelperTCell : public Cell {
   BDM_AGENT_HEADER(HelperTCell, Cell, 1);
+
  public:
-  HelperTCell() { SetDiameter(2.0 * P()->cell_radius_um); color_ = P()->color.helper; }
-  explicit HelperTCell(const Real3& p) : HelperTCell() { SetPosition(p); }
+  HelperTCell() = default;
+  explicit HelperTCell(const Real3& p) {
+    SetPosition(p);
+    SetDiameter(2.0 * SP()->cell_radius_um);
+    color_ = SP()->color_helper;
+  }
+
+  void Initialize(const NewAgentEvent& event) override {
+    Base::Initialize(event);
+    color_ = bdm_static_cast<HelperTCell*>(event.existing_agent)->color_;
+  }
+
   void SetCellColor(int c) { color_ = c; }
   int  GetCellColor() const { return color_; }
+
  private:
   int color_ = 0;
 };
 
 class TRegCell : public Cell {
   BDM_AGENT_HEADER(TRegCell, Cell, 1);
+
  public:
-  TRegCell() { SetDiameter(2.0 * P()->cell_radius_um); color_ = P()->color.treg; }
-  explicit TRegCell(const Real3& p) : TRegCell() { SetPosition(p); }
+  TRegCell() = default;
+  explicit TRegCell(const Real3& p) {
+    SetPosition(p);
+    SetDiameter(2.0 * SP()->cell_radius_um);
+    color_ = SP()->color_treg;
+  }
+
+  void Initialize(const NewAgentEvent& event) override {
+    Base::Initialize(event);
+    color_ = bdm_static_cast<TRegCell*>(event.existing_agent)->color_;
+  }
+
   void SetCellColor(int c) { color_ = c; }
   int  GetCellColor() const { return color_; }
+
  private:
   int color_ = 0;
 };
 
 // ============================================================================
-// Counting utilities: GLOBAL and LOCAL
+// Population census
 // ============================================================================
 struct Counts { size_t C=0, P=0, E=0, N=0, H=0, R=0; };
 
-// ---- Global census (computed at most once per step) ----
+// Global census: computed at most once per step via double-checked locking.
+// Thread-safe: multiple behaviors call RefreshIfNeeded() concurrently but only
+// one executes the ForEachAgent scan, the rest read the cached result.
 struct GlobalCensus {
-  size_t step_cached = std::numeric_limits<size_t>::max();
-  Counts cnt;
+  std::atomic<size_t> step_cached{std::numeric_limits<size_t>::max()};
+  Counts              cnt;
+  std::mutex          mtx;
 
   static GlobalCensus& Instance() { static GlobalCensus gc; return gc; }
 
   void RefreshIfNeeded() {
-    auto* sim = Simulation::GetActive();
-    auto steps = sim->GetScheduler()->GetSimulatedSteps();
-    if (steps == step_cached) return;
+    auto* sim   = Simulation::GetActive();
+    size_t step = sim->GetScheduler()->GetSimulatedSteps();
+
+    // Fast path: already cached for this step.
+    if (step_cached.load(std::memory_order_acquire) == step) return;
+
+    std::lock_guard<std::mutex> lock(mtx);
+    // Re-check inside lock (double-checked locking).
+    if (step_cached.load(std::memory_order_relaxed) == step) return;
 
     Counts c;
     sim->GetResourceManager()->ForEachAgent([&](Agent* a) {
@@ -260,11 +228,13 @@ struct GlobalCensus {
       else if (dynamic_cast<TRegCell*>(a))      ++c.R;
     });
     cnt = c;
-    step_cached = steps;
+    step_cached.store(step, std::memory_order_release);
   }
+
+  const Counts& Get() const { return cnt; }
 };
 
-// ---- Local neighborhood counter (within radius) ----
+// Local neighborhood census — counts within a radius around a given agent.
 struct LocalNeighborhoodCounter {
   struct Fun : public Functor<void, Agent*, real_t> {
     Counts* out;
@@ -279,69 +249,103 @@ struct LocalNeighborhoodCounter {
     }
   };
 
-  static Counts Around(const Agent& a, real_t radius_um) {
+  static Counts Around(const Agent& agent, real_t radius_um) {
     Counts out;
     auto* ctxt = Simulation::GetActive()->GetExecutionContext();
-    Fun f(&out);
-    const real_t sr = radius_um * radius_um;
-    ctxt->ForEachNeighbor(f, a, sr);
+    Fun   f(&out);
+    ctxt->ForEachNeighbor(f, agent, radius_um * radius_um);
     return out;
   }
 };
 
-// Unified accessor: returns either global or local counts for the calling agent
-inline Counts GetRelevantCounts(const Agent& self) {
-  if (!P()->use_local_counts) {
+// Unified accessor: returns global or local counts depending on params.
+inline Counts GetCounts(const Agent& self) {
+  const auto* sp = SP();
+  if (!sp->use_local_counts) {
     auto& gc = GlobalCensus::Instance();
     gc.RefreshIfNeeded();
-    return gc.cnt;
-  } else {
-    return LocalNeighborhoodCounter::Around(self, P()->local_radius_um);
+    return gc.Get();
   }
+  return LocalNeighborhoodCounter::Around(self, sp->local_radius_um);
 }
 
 // ============================================================================
-// Behaviors
+// Population logger
+// Owns the CSV file. Created once in Simulate(), stays alive for the run.
+// Behaviors write via PopulationLogger::Instance().
 // ============================================================================
+struct PopulationLogger {
+  std::ofstream csv;
+
+  static PopulationLogger& Instance() {
+    static PopulationLogger logger;
+    return logger;
+  }
+
+  void Open(const std::string& dir) {
+    std::filesystem::create_directories(dir);
+    std::string path = dir + "/populations.csv";
+    csv.open(path);
+    csv << "step,days,C,P,E,N,H,R,total\n";
+    csv.flush();
+  }
+
+  void Write(size_t step, real_t t_day,
+             size_t C, size_t P, size_t E, size_t N, size_t H, size_t R) {
+    csv << step << "," << t_day << ","
+        << C << "," << P << "," << E << ","
+        << N << "," << H << "," << R << ","
+        << (C + P + E + N + H + R) << "\n";
+    csv.flush();
+  }
+};
+
+// ============================================================================
+// Behaviors
+//
+// Key patterns (from CARTopiaX):
+//   • AlwaysCopyToNew() in constructor  → behavior auto-copies to daughter
+//   • No manual AddBehavior after Divide()
+//   • No ClampPoint inside behaviors (BoundSpaceMode::kClosed handles walls)
+//   • Death and division are independent events — both can fire in one step
+//   • gate_C_K removed — not in reference ODE
+// ============================================================================
+
 class TumorBehavior : public Behavior {
   BDM_BEHAVIOR_HEADER(TumorBehavior, Behavior, 1);
+
  public:
+  TumorBehavior() { AlwaysCopyToNew(); }
+
   void Run(Agent* a) override {
-    auto* c   = bdm_static_cast<TumorCell*>(a);
-    auto* ctxt= Simulation::GetActive()->GetExecutionContext();
-    auto* rng = Simulation::GetActive()->GetRandom();
-    c->SetPosition(ClampPoint(c->GetPosition()));
+    auto* c    = bdm_static_cast<TumorCell*>(a);
+    auto* ctxt = Simulation::GetActive()->GetExecutionContext();
+    auto* rng  = Simulation::GetActive()->GetRandom();
+    const auto* sp = SP();
 
-    const real_t dt_day = P()->dt_minutes / 1440.0;
-    const Counts cnt = GetRelevantCounts(*c);
+    const real_t dt_day = sp->dt_minutes / 1440.0;
+    const Counts cnt = GetCounts(*c);
 
-    // crowding on C
-    real_t crowd = 1.0 - Clamp(static_cast<real_t>(cnt.C) / std::max<real_t>(1.0, P()->K_C), 0.0, 1.0);
+    // --- Division (Eq. 2.1 growth terms) ---
+    // (k_c + mu_c·P)·C·(1-C/K_C): mu_c·P is LINEAR in P (not Hill)
+    real_t crowd  = 1.0 - Clamp(static_cast<real_t>(cnt.C) / sp->K_C, 0.0, 1.0);
+    real_t boostP = sp->c_boost_from_P * static_cast<real_t>(cnt.P);  // mu_c·P
+    real_t div_rate = (sp->c_base_div + boostP) * crowd;
 
-    // division: baseline + PSC boost (saturated by PSC count)
-    real_t boostP = P()->c_boost_from_P * Sat(static_cast<real_t>(cnt.P), P()->c_boost_from_P_K);
-    real_t div_rate = (P()->c_base_div + boostP) * crowd;
-
-    if (rng->Uniform(0,1) < ProbFromRate(div_rate, dt_day)) {
-      auto* d = c->Divide();
-      if (auto* cd = dynamic_cast<TumorCell*>(d)) {
-        cd->SetCellColor(P()->color.tumor);
-        cd->AddBehavior(new TumorBehavior());
-      }
-      c->SetCellColor(P()->color.tumor_div_tint);
+    if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
+      c->Divide();
+      c->SetCellColor(sp->color_tumor_div);
     } else {
-      c->SetCellColor(P()->color.tumor);
+      c->SetCellColor(sp->color_tumor);
     }
 
-    // death: E and N killing, E reduced by R
-    // In global mode we gate by tumor size; in local mode, gating naturally comes from local counts.
-    real_t gateC = P()->use_local_counts ? 1.0 : Sat(static_cast<real_t>(cnt.C), P()->gate_C_K);
-    real_t inhibit_E = 1.0 / (1.0 + P()->c_R_blocks_E * static_cast<real_t>(cnt.R));
-    real_t killE = P()->c_kill_by_E * Sat(static_cast<real_t>(cnt.E), P()->c_kill_by_E_K) * inhibit_E * gateC;
-    real_t killN = P()->c_kill_by_N * Sat(static_cast<real_t>(cnt.N), P()->c_kill_by_N_K) * gateC;
-    real_t p_kill = ProbFromRate(killE + killN, dt_day);
+    // --- Killing (Eq. 2.1 death terms) — independent of division ---
+    // b_c·N·C (bilinear in N) and d_c·E·C/(1+r1·R) (bilinear in E)
+    real_t inhibit_R = 1.0 / (1.0 + sp->c_R_blocks_E * static_cast<real_t>(cnt.R));
+    real_t killE = sp->c_kill_by_E * static_cast<real_t>(cnt.E) * inhibit_R;
+    real_t killN = sp->c_kill_by_N * static_cast<real_t>(cnt.N);
 
-    if (rng->Uniform(0,1) < p_kill) {
+    if (rng->Uniform(0, 1) < ProbFromRate(killE + killN, dt_day)) {
       ctxt->RemoveAgent(c->GetUid());
     }
   }
@@ -349,223 +353,298 @@ class TumorBehavior : public Behavior {
 
 class PSCBehavior : public Behavior {
   BDM_BEHAVIOR_HEADER(PSCBehavior, Behavior, 1);
+
  public:
+  PSCBehavior() { AlwaysCopyToNew(); }
+
   void Run(Agent* a) override {
-    auto* psc = bdm_static_cast<StellateCell*>(a);
-    auto* ctxt= Simulation::GetActive()->GetExecutionContext();
-    auto* rng = Simulation::GetActive()->GetRandom();
-    psc->SetPosition(ClampPoint(psc->GetPosition()));
+    auto* psc  = bdm_static_cast<StellateCell*>(a);
+    auto* ctxt = Simulation::GetActive()->GetExecutionContext();
+    auto* rng  = Simulation::GetActive()->GetRandom();
+    const auto* sp = SP();
 
-    const real_t dt_day = P()->dt_minutes / 1440.0;
-    const Counts cnt = GetRelevantCounts(*psc);
-    // std::cout << "PSC counts: C=" << cnt.C << " P=" << cnt.P << "\n";
-    real_t crowd  = 1.0 - Clamp(static_cast<real_t>(cnt.P) / std::max<real_t>(1.0, P()->K_P), 0.0, 1.0);
-    real_t boostC = P()->p_boost_from_C * Sat(static_cast<real_t>(cnt.C), P()->p_boost_from_C_K);
-    real_t div_rate = (P()->p_base_div + boostC) * crowd;
-    real_t die_rate = P()->p_base_death;
+    const real_t dt_day = sp->dt_minutes / 1440.0;
+    const Counts cnt = GetCounts(*psc);
 
-    if (rng->Uniform(0,1) < ProbFromRate(die_rate, dt_day)) {
+    // --- Death (lambda_p*P) — checked independently ---
+    if (rng->Uniform(0, 1) < ProbFromRate(sp->p_base_death, dt_day)) {
       ctxt->RemoveAgent(psc->GetUid());
       return;
     }
-    if (rng->Uniform(0,1) < ProbFromRate(div_rate, dt_day)) {
-      auto* d = psc->Divide();
-      if (auto* pd = dynamic_cast<StellateCell*>(d)) {
-        pd->SetCellColor(P()->color.psc);
-        pd->AddBehavior(new PSCBehavior());
-      }
+
+    // --- Division (Eq. 2.2) ---
+    // (k_p + f_p*C/(mu_p+C))*P*(1-a_p*P)
+    real_t crowd  = 1.0 - Clamp(static_cast<real_t>(cnt.P) / sp->K_P, 0.0, 1.0);
+    real_t boostC = sp->p_boost_from_C
+                  * Sat(static_cast<real_t>(cnt.C), sp->p_boost_from_C_K);
+    real_t div_rate = (sp->p_base_div + boostC) * crowd;
+
+    if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
+      psc->Divide();
     }
   }
 };
 
 class EffectorBehavior : public Behavior {
   BDM_BEHAVIOR_HEADER(EffectorBehavior, Behavior, 1);
+
  public:
+  EffectorBehavior() { AlwaysCopyToNew(); }
+
   void Run(Agent* a) override {
-    auto* e   = bdm_static_cast<EffectorTCell*>(a);
-    auto* ctxt= Simulation::GetActive()->GetExecutionContext();
-    auto* rng = Simulation::GetActive()->GetRandom();
-    e->SetPosition(ClampPoint(e->GetPosition()));
+    auto* e    = bdm_static_cast<EffectorTCell*>(a);
+    auto* ctxt = Simulation::GetActive()->GetExecutionContext();
+    auto* rng  = Simulation::GetActive()->GetRandom();
+    const auto* sp = SP();
 
-    const real_t dt_day = P()->dt_minutes / 1440.0;
-    const Counts cnt = GetRelevantCounts(*e);
+    const real_t dt_day = sp->dt_minutes / 1440.0;
+    const Counts cnt = GetCounts(*e);
 
-    real_t crowdE = 1.0 - Clamp(static_cast<real_t>(cnt.E) / std::max<real_t>(1.0, P()->K_E), 0.0, 1.0);
-    real_t helpH  = P()->e_help_from_H * Sat(static_cast<real_t>(cnt.H), P()->e_help_from_H_K);
-    real_t birth  = (P()->e_base_birth + helpH) * crowdE;
+    // --- Death (Eq. 2.3 death terms): b_e·E + c_e·E·C + δ_e·R·E ---
+    // c_e·C and δ_e·R are bilinear (no Hill).
+    real_t die = sp->e_base_death
+               + sp->e_inact_by_C * static_cast<real_t>(cnt.C)   // c_e·C
+               + sp->e_suppr_by_R * static_cast<real_t>(cnt.R);  // δ_e·R
 
-    real_t gateC = P()->use_local_counts ? 1.0 : Sat(static_cast<real_t>(cnt.C), P()->gate_C_K);
-    real_t die = P()->e_base_death
-               + P()->e_inact_by_C * Sat(static_cast<real_t>(cnt.C), P()->e_inact_by_C_K) * gateC
-               + P()->e_suppr_by_R * Sat(static_cast<real_t>(cnt.R), P()->e_suppr_by_R_K) * gateC;
-
-    // small nonlinearity to avoid instant wipeout at tiny counts
-    // die *= static_cast<real_t>(cnt.E) / (cnt.E + 1.0);
-
-    if (rng->Uniform(0,1) < ProbFromRate(die, dt_day)) {
+    if (rng->Uniform(0, 1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(e->GetUid());
       return;
     }
-    if (rng->Uniform(0,1) < ProbFromRate(birth, dt_day)) {
-      auto* d = e->Divide();
-      if (auto* ed = dynamic_cast<EffectorTCell*>(d)) {
-        ed->SetCellColor(P()->color.eff);
-        ed->AddBehavior(new EffectorBehavior());
-      }
+
+    // --- Per-cell proliferation (Eq. 2.3, p_e·H·E/(g_e+H) term) ---
+    // Constant influx a_e handled by SourceBehavior.
+    real_t div_rate = sp->e_help_from_H
+                    * Sat(static_cast<real_t>(cnt.H), sp->e_help_from_H_K);
+
+    if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
+      e->Divide();
     }
   }
 };
 
 class NKBehavior : public Behavior {
   BDM_BEHAVIOR_HEADER(NKBehavior, Behavior, 1);
+
  public:
+  NKBehavior() { AlwaysCopyToNew(); }
+
   void Run(Agent* a) override {
-    auto* n   = bdm_static_cast<NKCell*>(a);
-    auto* ctxt= Simulation::GetActive()->GetExecutionContext();
-    auto* rng = Simulation::GetActive()->GetRandom();
-    n->SetPosition(ClampPoint(n->GetPosition()));
+    auto* n    = bdm_static_cast<NKCell*>(a);
+    auto* ctxt = Simulation::GetActive()->GetExecutionContext();
+    auto* rng  = Simulation::GetActive()->GetRandom();
+    const auto* sp = SP();
 
-    const real_t dt_day = P()->dt_minutes / 1440.0;
-    const Counts cnt = GetRelevantCounts(*n);
+    const real_t dt_day = sp->dt_minutes / 1440.0;
+    const Counts cnt = GetCounts(*n);
 
-    real_t crowdN = 1.0 - Clamp(static_cast<real_t>(cnt.N) / std::max<real_t>(1.0, P()->K_N), 0.0, 1.0);
-    real_t helpH  = P()->n_help_from_H * Sat(static_cast<real_t>(cnt.H), P()->n_help_from_H_K);
-    real_t birth  = (P()->n_base_birth + helpH) * crowdN;
+    // --- Death (Eq. 2.4 death terms): b_n·N + c_n·N·C + δ_n·R·N ---
+    real_t die = sp->n_base_death
+               + sp->n_inact_by_C * static_cast<real_t>(cnt.C)   // c_n·C (bilinear)
+               + sp->n_suppr_by_R * static_cast<real_t>(cnt.R);  // δ_n·R (bilinear)
 
-    real_t gateC = P()->use_local_counts ? 1.0 : Sat(static_cast<real_t>(cnt.C), P()->gate_C_K);
-    real_t die = P()->n_base_death
-               + P()->n_inact_by_C * Sat(static_cast<real_t>(cnt.C), P()->n_inact_by_C_K) * gateC
-               + P()->n_suppr_by_R * Sat(static_cast<real_t>(cnt.R), P()->n_suppr_by_R_K) * gateC;
-
-    // die *= static_cast<real_t>(cnt.N) / (cnt.N + 1.0);
-
-    if (rng->Uniform(0,1) < ProbFromRate(die, dt_day)) {
+    if (rng->Uniform(0, 1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(n->GetUid());
       return;
     }
-    if (rng->Uniform(0,1) < ProbFromRate(birth, dt_day)) {
-      auto* d = n->Divide();
-      if (auto* nd = dynamic_cast<NKCell*>(d)) {
-        nd->SetCellColor(P()->color.nk);
-        nd->AddBehavior(new NKBehavior());
-      }
+
+    // --- Per-cell proliferation (Eq. 2.4, p_n·H·N/(g_n+H) term) ---
+    // Constant influx a_n handled by SourceBehavior.
+    real_t div_rate = sp->n_help_from_H
+                    * Sat(static_cast<real_t>(cnt.H), sp->n_help_from_H_K);
+
+    if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
+      n->Divide();
     }
   }
 };
 
 class HelperBehavior : public Behavior {
   BDM_BEHAVIOR_HEADER(HelperBehavior, Behavior, 1);
+
  public:
+  HelperBehavior() { AlwaysCopyToNew(); }
+
   void Run(Agent* a) override {
-    auto* h   = bdm_static_cast<HelperTCell*>(a);
-    auto* ctxt= Simulation::GetActive()->GetExecutionContext();
-    auto* rng = Simulation::GetActive()->GetRandom();
-    h->SetPosition(ClampPoint(h->GetPosition()));
+    auto* h    = bdm_static_cast<HelperTCell*>(a);
+    auto* ctxt = Simulation::GetActive()->GetExecutionContext();
+    auto* rng  = Simulation::GetActive()->GetRandom();
+    const auto* sp = SP();
 
-    const real_t dt_day = P()->dt_minutes / 1440.0;
-    const Counts cnt = GetRelevantCounts(*h);
+    const real_t dt_day = sp->dt_minutes / 1440.0;
+    const Counts cnt = GetCounts(*h);
 
-    real_t crowdH = 1.0 - Clamp(static_cast<real_t>(cnt.H) / std::max<real_t>(1.0, P()->K_H), 0.0, 1.0);
-    real_t self   = P()->h_self_act * Sat(static_cast<real_t>(cnt.H), P()->h_self_act_K);
-    real_t birth  = (P()->h_base_birth + self) * crowdH;
+    // --- Death (Eq. 2.5 death terms): b_h·H + δ_h·R·H ---
+    // δ_h·R is bilinear in R.
+    real_t die = sp->h_base_death
+               + sp->h_suppr_by_R * static_cast<real_t>(cnt.R);  // δ_h·R (bilinear)
 
-    real_t gateC = P()->use_local_counts ? 1.0 : Sat(static_cast<real_t>(cnt.C), P()->gate_C_K);
-    real_t die = P()->h_base_death
-               + P()->h_suppr_by_R * Sat(static_cast<real_t>(cnt.R), P()->h_suppr_by_R_K) * gateC;
-
-    if (rng->Uniform(0,1) < ProbFromRate(die, dt_day)) {
+    if (rng->Uniform(0, 1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(h->GetUid());
       return;
     }
-    if (rng->Uniform(0,1) < ProbFromRate(birth, dt_day)) {
-      auto* d = h->Divide();
-      if (auto* hd = dynamic_cast<HelperTCell*>(d)) {
-        hd->SetCellColor(P()->color.helper);
-        hd->AddBehavior(new HelperBehavior());
-      }
+
+    // --- Per-cell self-activation (Eq. 2.5, p_h·H²/(g_h+H) = p_h·H/(g_h+H) per cell) ---
+    // Constant influx a_h handled by SourceBehavior.
+    real_t div_rate = sp->h_self_act
+                    * Sat(static_cast<real_t>(cnt.H), sp->h_self_act_K);
+
+    if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
+      h->Divide();
     }
   }
 };
 
 class TRegBehavior : public Behavior {
   BDM_BEHAVIOR_HEADER(TRegBehavior, Behavior, 1);
+
  public:
+  TRegBehavior() { AlwaysCopyToNew(); }
+
   void Run(Agent* a) override {
-    auto* r   = bdm_static_cast<TRegCell*>(a);
-    auto* ctxt= Simulation::GetActive()->GetExecutionContext();
-    auto* rng = Simulation::GetActive()->GetRandom();
-    r->SetPosition(ClampPoint(r->GetPosition()));
+    auto* r    = bdm_static_cast<TRegCell*>(a);
+    auto* ctxt = Simulation::GetActive()->GetExecutionContext();
+    auto* rng  = Simulation::GetActive()->GetRandom();
+    const auto* sp = SP();
 
-    const real_t dt_day = P()->dt_minutes / 1440.0;
-    const Counts cnt = GetRelevantCounts(*r);
+    const real_t dt_day = sp->dt_minutes / 1440.0;
+    const Counts cnt = GetCounts(*r);
 
-    real_t crowdR = 1.0 - Clamp(static_cast<real_t>(cnt.R) / std::max<real_t>(1.0, P()->K_R), 0.0, 1.0);
-    real_t birth  = (P()->r_base_src
-                  +  P()->r_induced_by_E * Sat(static_cast<real_t>(cnt.E), P()->r_induced_by_E_K)
-                  +  P()->r_induced_by_H * Sat(static_cast<real_t>(cnt.H), P()->r_induced_by_H_K))
-                  *  crowdR;
+    // --- Death (Eq. 2.6 death terms): δ_r·R + r·N·R ---
+    // r·N is bilinear in N.
+    real_t die = sp->r_decay
+               + sp->r_cleared_by_N * static_cast<real_t>(cnt.N);  // r·N (bilinear)
 
-    real_t die    = P()->r_decay
-                  + P()->r_cleared_by_N * Sat(static_cast<real_t>(cnt.N), P()->r_cleared_by_N_K);
-
-    if (rng->Uniform(0,1) < ProbFromRate(die, dt_day)) {
+    if (rng->Uniform(0, 1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(r->GetUid());
       return;
     }
-    if (rng->Uniform(0,1) < ProbFromRate(birth, dt_day)) {
-      auto* d = r->Divide();
-      if (auto* rd = dynamic_cast<TRegCell*>(d)) {
-        rd->SetCellColor(P()->color.treg);
-        rd->AddBehavior(new TRegBehavior());
-      }
+
+    // --- Per-cell proliferation (Eq. 2.6, p_r·H·R/(g_r+H) term) ---
+    // Absolute sources a, a_r·E, b_r·H handled by SourceBehavior.
+    real_t div_rate = sp->r_prolif_by_H
+                    * Sat(static_cast<real_t>(cnt.H), sp->r_prolif_by_H_K);
+
+    if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
+      r->Divide();
     }
   }
 };
 
 // ============================================================================
-// Reporter (daily CSV)
+// SourceBehavior
+// Implements density-independent (constant) immune recruitment terms from
+// the ODE: a_e, a_n, a_h, a_r  (Eqs. 2.3–2.6).
+//
+// Each is a constant influx (cells/day) independent of current population.
+// Attached to the reporter agent; runs every step.  Cells are added via
+// ctxt->AddAgent so they appear in the next step.
+//
+// Why here and not in per-cell behaviors: a_e*E (wrong) vs a_e (correct).
+// Dividing by current count would undercount when population is near zero.
+// ============================================================================
+class SourceBehavior : public Behavior {
+  BDM_BEHAVIOR_HEADER(SourceBehavior, Behavior, 1);
+
+ public:
+  void Run(Agent* agent) override {
+    auto* sim  = Simulation::GetActive();
+    auto* ctxt = sim->GetExecutionContext();
+    auto* rng  = sim->GetRandom();
+    const auto* sp = SP();
+
+    const real_t dt_day = sp->dt_minutes / 1440.0;
+    const Counts cnt    = GetCounts(*agent);
+    const real_t lo     = sp->min_bound;
+    const real_t hi     = sp->max_bound;
+
+    auto rpos = [&]() -> Real3 {
+      return {rng->Uniform(lo, hi), rng->Uniform(lo, hi), rng->Uniform(lo, hi)};
+    };
+    auto spawn_e = [&]() {
+      auto* e = new EffectorTCell(rpos());
+      e->AddBehavior(new EffectorBehavior());
+      ctxt->AddAgent(e);
+    };
+    auto spawn_n = [&]() {
+      auto* n = new NKCell(rpos());
+      n->AddBehavior(new NKBehavior());
+      ctxt->AddAgent(n);
+    };
+    auto spawn_h = [&]() {
+      auto* h = new HelperTCell(rpos());
+      h->AddBehavior(new HelperBehavior());
+      ctxt->AddAgent(h);
+    };
+    auto spawn_r = [&]() {
+      auto* r = new TRegCell(rpos());
+      r->AddBehavior(new TRegBehavior());
+      ctxt->AddAgent(r);
+    };
+
+    // --- a_e: constant E influx (Eq. 2.3 — unconditional, no crowding) ---
+    if (rng->Uniform(0, 1) < ProbFromRate(sp->e_base_birth, dt_day)) spawn_e();
+
+    // --- a_n: constant N influx (Eq. 2.4) ---
+    if (rng->Uniform(0, 1) < ProbFromRate(sp->n_base_birth, dt_day)) spawn_n();
+
+    // --- a_h: constant H influx (Eq. 2.5) ---
+    if (rng->Uniform(0, 1) < ProbFromRate(sp->h_base_birth, dt_day)) spawn_h();
+
+    // --- Eq. 2.6 three R source terms ---
+    // (1) constant a
+    if (rng->Uniform(0, 1) < ProbFromRate(sp->r_base_src, dt_day)) spawn_r();
+
+    // (2) a_r·E — absolute induction by CTLs
+    real_t rate_r_e = sp->r_induced_by_E * static_cast<real_t>(cnt.E);
+    if (rng->Uniform(0, 1) < ProbFromRate(rate_r_e, dt_day)) spawn_r();
+
+    // (3) b_r·H — absolute induction by Helper T cells
+    real_t rate_r_h = sp->r_induced_by_H * static_cast<real_t>(cnt.H);
+    if (rng->Uniform(0, 1) < ProbFromRate(rate_r_h, dt_day)) spawn_r();
+  }
+};
+
+// ============================================================================
+// Reporter
+// A lightweight invisible agent that runs once per simulated day and writes
+// population counts to the CSV via PopulationLogger.
+// It reads counts from GlobalCensus (already computed this step by behaviors).
 // ============================================================================
 class ReporterCell : public Cell {
   BDM_AGENT_HEADER(ReporterCell, Cell, 1);
+
  public:
   ReporterCell() { SetDiameter(0.1); }
 };
 
 class ReportPopCounts : public Behavior {
   BDM_BEHAVIOR_HEADER(ReportPopCounts, Behavior, 1);
+
  public:
   void Run(Agent* /*unused*/) override {
     auto* sim = Simulation::GetActive();
-    auto* rm  = sim->GetResourceManager();
-    const auto steps = sim->GetScheduler()->GetSimulatedSteps();
-    const real_t t_day = (P()->dt_minutes * steps) / 1440.0;
+    const auto* sp = SP();
+    const size_t steps     = sim->GetScheduler()->GetSimulatedSteps();
+    const real_t dt_day    = sp->dt_minutes / 1440.0;
+    const real_t t_day     = dt_day * static_cast<real_t>(steps);
+    const size_t steps_per_day = static_cast<size_t>(
+        std::max(1.0, 1440.0 / sp->dt_minutes));
 
-    size_t C=0, Pn=0, E=0, N=0, H=0, R=0;
-    rm->ForEachAgent([&](Agent* a) {
-      if      (dynamic_cast<TumorCell*>(a))     ++C;
-      else if (dynamic_cast<StellateCell*>(a))  ++Pn;
-      else if (dynamic_cast<EffectorTCell*>(a)) ++E;
-      else if (dynamic_cast<NKCell*>(a))        ++N;
-      else if (dynamic_cast<HelperTCell*>(a))   ++H;
-      else if (dynamic_cast<TRegCell*>(a))      ++R;
-    });
+    if (steps % steps_per_day != 0) return;
 
-    static std::ofstream csv("data-export/populations.csv");
-    static bool wrote_header = false;
-    if (!wrote_header) {
-      csv << "step,days,C,P,E,N,H,R,total\n";
-      wrote_header = true;
-    }
-    // write once per day
-    size_t steps_per_day = static_cast<size_t>(1440.0 / std::max<real_t>(1.0, P()->dt_minutes));
-    if (steps % std::max<size_t>(steps_per_day, 1) == 0) {
-      std::cout << "[day " << t_day << "] C=" << C << " P=" << Pn
-                << " E=" << E << " N=" << N << " H=" << H << " R=" << R << "\n";
-      csv << steps << "," << t_day + 7 << ","
-          << C << "," << Pn << "," << E << "," << N << "," << H << "," << R << ","
-          << (C+Pn+E+N+H+R) << "\n";
-      csv.flush();
-    }
+    // Reuse the census already computed this step by the cell behaviors.
+    auto& gc = GlobalCensus::Instance();
+    gc.RefreshIfNeeded();
+    const Counts& c = gc.Get();
+
+    const real_t day_since_start = t_day + 7.0;  // paper starts at day 7
+    std::cout << "[day " << day_since_start << "] "
+              << "C=" << c.C << " P=" << c.P
+              << " E=" << c.E << " N=" << c.N
+              << " H=" << c.H << " R=" << c.R << "\n";
+
+    PopulationLogger::Instance().Write(
+        steps, day_since_start, c.C, c.P, c.E, c.N, c.H, c.R);
   }
 };
 
@@ -573,77 +652,97 @@ class ReportPopCounts : public Behavior {
 // Simulate
 // ============================================================================
 inline int Simulate(int argc, const char** argv) {
-  auto setp = [](Param* param) {
-    param->bound_space = Param::BoundSpaceMode::kClosed;
-    param->min_bound = P()->min_bound;
-    param->max_bound = P()->max_bound;
-    param->simulation_time_step = P()->dt_minutes; // minutes per step
-    // ensure neighbor search can cover local_radius_um safely
-   
+  // Register SimParam with BioDynaMo's param system BEFORE constructing
+  // Simulation. Param::Param() copies all registered groups into the live
+  // param store; Get<SimParam>() will segfault if this is skipped.
+  Param::RegisterParamGroup(new SimParam());
+
+  // Phase 1: read JSON into a temporary SimParam to extract bounds/dt for the
+  // setup lambda. The actual params are loaded into sp after Simulation is up.
+  SimParam tmp;
+  tmp.LoadParams("params.json");
+
+  auto setp = [&tmp](Param* param) {
+    param->bound_space          = Param::BoundSpaceMode::kClosed;
+    param->min_bound            = tmp.min_bound;
+    param->max_bound            = tmp.max_bound;
+    param->simulation_time_step = tmp.dt_minutes;
   };
 
   Simulation sim(argc, argv, setp);
+  sim.GetRandom()->SetSeed(tmp.seed);
 
-  // If using local neighborhoods, convert carrying capacities to *local* caps
-  if (P()->use_local_counts) {
-    P()->RecomputeCapsForLocal();
+  // Phase 2: overwrite the live SimParam with the JSON-loaded values so SP()
+  // returns correct values in all behaviors.
+  auto* sp = const_cast<SimParam*>(sim.GetParam()->Get<SimParam>());
+  *sp = tmp;
+  sp->PrintParams();
+
+  // Disable mechanical forces: this model uses global ODE replication mode where
+  // spatial structure is irrelevant. Mechanics only add noise and slow the run.
+  // (When local-mode spatial experiments are introduced, remove this line.)
+  auto* scheduler = sim.GetScheduler();
+  auto mech_ops = scheduler->GetOps("mechanical forces");
+  if (!mech_ops.empty()) {
+    scheduler->UnscheduleOp(mech_ops[0]);
   }
+
+  // Open the output CSV.
+  PopulationLogger::Instance().Open(sp->output_dir);
 
   auto* ctxt = sim.GetExecutionContext();
   auto* rng  = sim.GetRandom();
 
+  // Helper: random position within the domain.
+  const real_t lo = sp->min_bound, hi = sp->max_bound;
   auto rand_pos = [&]() -> Real3 {
-    return Real3{rng->Uniform(P()->min_bound, P()->max_bound),
-                 rng->Uniform(P()->min_bound, P()->max_bound),
-                 rng->Uniform(P()->min_bound, P()->max_bound)};
+    return {rng->Uniform(lo, hi), rng->Uniform(lo, hi), rng->Uniform(lo, hi)};
   };
 
-  // Seed populations
-  for (size_t i=0; i<P()->C0; ++i) {
-    auto* c = new TumorCell(ClampPoint(rand_pos()));
-    c->SetCellColor(P()->color.tumor);
+  // --- Seed populations ---
+  for (size_t i = 0; i < sp->C0; ++i) {
+    auto* c = new TumorCell(ClampPoint(rand_pos(), lo, hi));
     c->AddBehavior(new TumorBehavior());
     ctxt->AddAgent(c);
   }
-  for (size_t i=0; i<P()->P0; ++i) {
-    auto* p = new StellateCell(ClampPoint(rand_pos()));
-    p->SetCellColor(P()->color.psc);
+  for (size_t i = 0; i < sp->P0; ++i) {
+    auto* p = new StellateCell(ClampPoint(rand_pos(), lo, hi));
     p->AddBehavior(new PSCBehavior());
     ctxt->AddAgent(p);
   }
-  for (size_t i=0; i<P()->E0; ++i) {
-    auto* e = new EffectorTCell(ClampPoint(rand_pos()));
-    e->SetCellColor(P()->color.eff);
+  for (size_t i = 0; i < sp->E0; ++i) {
+    auto* e = new EffectorTCell(ClampPoint(rand_pos(), lo, hi));
     e->AddBehavior(new EffectorBehavior());
     ctxt->AddAgent(e);
   }
-  for (size_t i=0; i<P()->N0; ++i) {
-    auto* n = new NKCell(ClampPoint(rand_pos()));
-    n->SetCellColor(P()->color.nk);
+  for (size_t i = 0; i < sp->N0; ++i) {
+    auto* n = new NKCell(ClampPoint(rand_pos(), lo, hi));
     n->AddBehavior(new NKBehavior());
     ctxt->AddAgent(n);
   }
-  for (size_t i=0; i<P()->H0; ++i) {
-    auto* h = new HelperTCell(ClampPoint(rand_pos()));
-    h->SetCellColor(P()->color.helper);
+  for (size_t i = 0; i < sp->H0; ++i) {
+    auto* h = new HelperTCell(ClampPoint(rand_pos(), lo, hi));
     h->AddBehavior(new HelperBehavior());
     ctxt->AddAgent(h);
   }
-  for (size_t i=0; i<P()->R0; ++i) {
-    auto* r = new TRegCell(ClampPoint(rand_pos()));
-    r->SetCellColor(P()->color.treg);
+  for (size_t i = 0; i < sp->R0; ++i) {
+    auto* r = new TRegCell(ClampPoint(rand_pos(), lo, hi));
     r->AddBehavior(new TRegBehavior());
     ctxt->AddAgent(r);
   }
 
-  // Reporter agent
+  // Reporter + constant source (invisible agent; not using AlwaysCopyToNew)
   auto* rep = new ReporterCell();
   rep->AddBehavior(new ReportPopCounts());
+  rep->AddBehavior(new SourceBehavior());
   ctxt->AddAgent(rep);
 
-  // Run ~100 days (1 min step → 1440 steps per day)
-  sim.GetScheduler()->Simulate(1440 * 93);
-  std::cout << "Pancreatic tumor (C,P,E,N,H,R) ABM (global interactions) completed.\n";
+  const size_t total_steps =
+      static_cast<size_t>(sp->total_days * 1440.0 / sp->dt_minutes);
+  sim.GetScheduler()->Simulate(total_steps);
+
+  std::cout << "Pancreatic tumor ABM completed ("
+            << sp->total_days << " days).\n";
   return 0;
 }
 
