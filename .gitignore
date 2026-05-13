@@ -1,6 +1,9 @@
 build/
 output/
-docs/
+CLAUDE.md
+docs/*
+!docs/TODO.md
+*.pdf
 
 **/.DS_Store
 
