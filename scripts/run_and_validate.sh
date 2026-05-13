@@ -92,7 +92,7 @@ fi
 
 # Always compute error metrics first (updates fit_metrics_summary.csv)
 cd "${REPO_ROOT}"
-python3 data-export/calc-error.py 2>/dev/null || true
+python3 scripts/calc-error.py 2>/dev/null || true
 
 # Then run threshold validation
 python3 "${VALIDATE_PY}" \

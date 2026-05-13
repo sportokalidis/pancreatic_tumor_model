@@ -42,8 +42,8 @@ REPO_ROOT  = Path(__file__).resolve().parent.parent
 PYTHON     = sys.executable           # same interpreter that launched this script
 REFS_DIR   = REPO_ROOT / "data-export"
 ODE_SCRIPT = REPO_ROOT / "scripts" / "ode_reference.py"
-ERR_SCRIPT = REPO_ROOT / "data-export" / "calc-error.py"
-PLT_SCRIPT = REPO_ROOT / "data-export" / "create-plots.py"
+ERR_SCRIPT = REPO_ROOT / "scripts" / "calc-error.py"
+PLT_SCRIPT = REPO_ROOT / "scripts" / "create-plots.py"
 
 
 # ---------------------------------------------------------------------------
