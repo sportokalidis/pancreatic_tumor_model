@@ -130,33 +130,59 @@ def compute_fit_metrics(exp_df, sim_df, sim_col, sim_day_col="day"):
         "R2": r2(y_true, y_pred),
     }
 
-def main():
-    # Load simulation with headers
-    sim_df = pd.read_csv(SIM_PATH)
+def compute_all_metrics(sim_csv: Path, refs_dir: Path) -> pd.DataFrame:
+    """
+    Core logic: load sim CSV and all paper-reference CSVs from refs_dir,
+    compute fit metrics for every population.  Returns a DataFrame.
+    """
+    sim_df = pd.read_csv(sim_csv)
     sim_day_col = find_day_column(sim_df)
 
+    pop_map = {
+        "Tumor":   {"exp_csv": refs_dir / "C-Cells_scaled_global.csv", "tokens": ["tumor", "c", "c_cells", "c-cells"]},
+        "PSC":     {"exp_csv": refs_dir / "P-Cells_scaled_global.csv", "tokens": ["psc", "p", "p_cells", "p-cells"]},
+        "CD8":     {"exp_csv": refs_dir / "E-Cells_scaled_global.csv", "tokens": ["cd8", "cd8+", "e", "e_cells", "e-cells"]},
+        "NK":      {"exp_csv": refs_dir / "N-Cells_scaled_global.csv", "tokens": ["nk", "n", "n_cells", "n-cells"]},
+        "HelperT": {"exp_csv": refs_dir / "H-Cells_scaled_global.csv", "tokens": ["helper", "helpert", "th", "h", "h_cells", "h-cells"]},
+        "Treg":    {"exp_csv": refs_dir / "R-Cells_scaled_global.csv", "tokens": ["treg", "tregs", "r", "r_cells", "r-cells"]},
+    }
+
     rows = []
-    for pop, meta in POP_MAP.items():
+    for pop, meta in pop_map.items():
         exp_df = read_exp_no_header(meta["exp_csv"])
         sim_col = find_sim_column(sim_df, [t.lower() for t in meta["tokens"]])
         if sim_col is None:
             rows.append({
-                "population": pop,
-                "sim_column": None,
+                "population": pop, "sim_column": None,
                 "status": "missing in simulation",
                 "n_points_compared": 0, "MAE": np.nan, "RMSE": np.nan,
                 "NRMSE_range": np.nan, "NRMSE_mean": np.nan, "MAPE_%": np.nan, "R2": np.nan
             })
             continue
-
         metrics = compute_fit_metrics(exp_df, sim_df, sim_col, sim_day_col)
         rows.append({"population": pop, "sim_column": sim_col, "status": "ok", **metrics})
 
-    summary = pd.DataFrame(rows)
-    out = BASE_DIR / "fit_metrics_summary.csv"
-    summary.to_csv(out, index=False)
+    return pd.DataFrame(rows)
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Compute fit metrics vs paper reference")
+    parser.add_argument("--sim",  default=str(BASE_DIR / "populations.csv"),
+                        help="Path to simulation populations CSV")
+    parser.add_argument("--refs", default=str(BASE_DIR),
+                        help="Directory containing *_scaled_global.csv reference files")
+    parser.add_argument("--out",  default=str(BASE_DIR),
+                        help="Output directory for fit_metrics_summary.csv")
+    args = parser.parse_args()
+
+    summary = compute_all_metrics(Path(args.sim), Path(args.refs))
+
+    out_path = Path(args.out) / "fit_metrics_summary.csv"
+    summary.to_csv(out_path, index=False)
     print(summary.to_string(index=False))
-    print(f"\nSaved: {out}")
+    print(f"\nSaved: {out_path}")
+
 
 if __name__ == "__main__":
     main()

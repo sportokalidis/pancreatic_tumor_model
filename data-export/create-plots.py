@@ -1,71 +1,244 @@
+#!/usr/bin/env python3
+"""
+Publication-quality comparison: ABM output vs ODE reference vs paper reference.
+
+Generates two figures:
+  1. comparison_grid.png  — 2×3 panel, one population per axis, all three sources
+  2. comparison_combined.png — all 6 populations on one log-scale axis (overview)
+
+Usage:
+  python3 data-export/create-plots.py [--out data-export]
+"""
+
+import argparse
 import os
+from pathlib import Path
+
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.lines as mlines
 
-# Path to your folder
-folder = os.path.expanduser(
-    "~/Documents/dev/ESB-Workshop-tutorial/pancreatic_tumor_model/data-export"
-)
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+POPS = ["C", "P", "E", "N", "H", "R"]
 
-# Fixed colors per population (matches your reference figure)
-colors = {
-    "C": "blue",
-    "P": "red",
-    "E": "orange",
-    "N": "green",
-    "H": "cyan",
-    "R": "purple",
+LABELS = {
+    "C": "Tumor (C)",
+    "P": "PSC (P)",
+    "E": "CD8⁺ T (E)",
+    "N": "NK (N)",
+    "H": "Helper T (H)",
+    "R": "Treg (R)",
 }
 
-# Original and scaled CSVs
-original_csvs = ["C-Cells.csv", "E-Cells.csv", "H-Cells.csv", "N-Cells.csv", "P-Cells.csv", "R-Cells.csv"]
-scaled_csvs   = ["C-Cells_scaled_global.csv", "E-Cells_scaled_global.csv", "H-Cells_scaled_global.csv",
-                 "N-Cells_scaled_global.csv", "P-Cells_scaled_global.csv", "R-Cells_scaled_global.csv"]
+COLORS = {
+    "C": "#1f77b4",   # blue
+    "P": "#d62728",   # red
+    "E": "#ff7f0e",   # orange
+    "N": "#2ca02c",   # green
+    "H": "#17becf",   # cyan
+    "R": "#9467bd",   # purple
+}
 
-# Create subplots: 2 rows, 1 column
-fig, axes = plt.subplots(2, 1, figsize=(11, 10), sharex=True)
+plt.rcParams.update({
+    "font.family":      "serif",
+    "font.size":        11,
+    "axes.titlesize":   12,
+    "axes.labelsize":   11,
+    "legend.fontsize":  9,
+    "xtick.labelsize":  10,
+    "ytick.labelsize":  10,
+    "figure.dpi":       150,
+    "axes.spines.top":  False,
+    "axes.spines.right":False,
+})
 
-# -------------------------
-# Plot 1: separate CSVs (original + scaled)
-# -------------------------
-for csv_file in original_csvs:
-    path = os.path.join(folder, csv_file)
-    df = pd.read_csv(path, header=None, names=["Days", "Cells Population"])
-    key = csv_file.split("-")[0]  # "C" from "C-Cells.csv"
-    axes[0].plot(df["Days"], df["Cells Population"], label=key, color=colors[key], linewidth=2)
 
-for csv_file in scaled_csvs:
-    path = os.path.join(folder, csv_file)
-    if os.path.exists(path):
-        df = pd.read_csv(path, header=None, names=["Days", "Cells Population"])
-        key = csv_file.split("-")[0]
-        axes[1].plot(
-            df["Days"], df["Cells Population"],
-            label=f"{key} (scaled)", color=colors[key],
-            linestyle="--", linewidth=1.8, alpha=0.9
-        )
+# ---------------------------------------------------------------------------
+# Data loading helpers
+# ---------------------------------------------------------------------------
+def load_abm(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    df.columns = df.columns.str.lower().str.strip()
+    return df
 
-axes[0].set_ylabel("Cells Population (log scale)")
-axes[0].set_title("Cells Population Over Time (separate CSVs: original & scaled)")
-axes[0].set_yscale("log")
-axes[0].legend(ncol=3)
-axes[0].grid(True, which="both", linestyle="--", linewidth=0.5)
 
-# -------------------------
-# Plot 2: populations.csv (C,P,E,N,H,R vs days)
-# -------------------------
-pop_file = os.path.join(folder, "populations.csv")
-df_pop = pd.read_csv(pop_file)
+def load_ode(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    df.columns = df.columns.str.lower().str.strip()
+    return df
 
-for col in ["C", "P", "E", "N", "H", "R"]:
-    axes[1].plot(df_pop["days"], df_pop[col], label=col, color=colors[col], linewidth=2)
 
-axes[1].set_xlabel("Days")
-axes[1].set_ylabel("Cells Population (log scale)")
-axes[1].set_title("Cells Population Over Time (from populations.csv)")
-axes[1].set_yscale("log")
-axes[1].legend(ncol=6)
-axes[1].grid(True, which="both", linestyle="--", linewidth=0.5)
+def load_paper_ref(data_dir: Path) -> dict[str, pd.DataFrame]:
+    """Load per-population paper reference CSVs (no header, col0=day, col1=count)."""
+    refs = {}
+    for pop in POPS:
+        csv = data_dir / f"{pop}-Cells_scaled_global.csv"
+        if csv.exists():
+            df = pd.read_csv(csv, header=None, names=["day", "count"])
+            refs[pop] = df
+    return refs
 
-plt.tight_layout()
-plt.show()
+
+# ---------------------------------------------------------------------------
+# Figure 1: 2×3 grid — one panel per population
+# ---------------------------------------------------------------------------
+def plot_grid(df_abm, df_ode, paper_refs, out_path: Path):
+    fig, axes = plt.subplots(2, 3, figsize=(15, 9), sharex=False)
+    axes = axes.flatten()
+
+    for ax, pop in zip(axes, POPS):
+        color = COLORS[pop]
+        pop_lc = pop.lower()
+
+        # Paper reference (scatter dots)
+        if pop in paper_refs:
+            ref = paper_refs[pop]
+            ax.scatter(ref["day"], ref["count"],
+                       color=color, s=18, zorder=5,
+                       alpha=0.7, label="Paper ref.")
+
+        # ODE reference (thick solid)
+        if pop_lc in df_ode.columns:
+            ax.plot(df_ode["days"], df_ode[pop_lc],
+                    color=color, linewidth=2.5, linestyle="-",
+                    label="ODE", zorder=4)
+
+        # ABM output (dashed)
+        if pop_lc in df_abm.columns:
+            ax.plot(df_abm["days"], df_abm[pop_lc],
+                    color=color, linewidth=1.8, linestyle="--",
+                    alpha=0.9, label="ABM", zorder=3)
+
+        ax.set_title(LABELS[pop])
+        ax.set_xlabel("Day")
+        ax.set_ylabel("Cell count")
+        ax.legend(loc="best")
+        ax.grid(True, linestyle=":", alpha=0.4)
+
+        # Log scale if dynamic range > 100×
+        all_vals = []
+        if pop_lc in df_ode.columns:
+            all_vals.extend(df_ode[pop_lc].tolist())
+        if pop_lc in df_abm.columns:
+            all_vals.extend(df_abm[pop_lc].tolist())
+        if pop in paper_refs:
+            all_vals.extend(paper_refs[pop]["count"].tolist())
+        positive = [v for v in all_vals if v > 0]
+        if positive and max(positive) / max(min(positive), 1) > 100:
+            ax.set_yscale("log")
+
+    fig.suptitle(
+        "Pancreatic Tumor Model — ABM vs ODE vs Paper Reference\n"
+        "(Akman Yıldız et al., 2021)",
+        fontsize=13, y=1.01
+    )
+
+    # Shared legend at the bottom
+    handles = [
+        mlines.Line2D([], [], color="gray", linewidth=2.5, linestyle="-",  label="ODE (same params)"),
+        mlines.Line2D([], [], color="gray", linewidth=1.8, linestyle="--", label="ABM"),
+        mlines.Line2D([], [], color="gray", marker="o", linestyle="None",  markersize=5, label="Paper ref."),
+    ]
+    fig.legend(handles=handles, loc="lower center", ncol=3,
+               bbox_to_anchor=(0.5, -0.04), frameon=True)
+
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=200, bbox_inches="tight")
+    print(f"Grid figure saved: {out_path}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Figure 2: all-in-one overview (log scale)
+# ---------------------------------------------------------------------------
+def plot_combined(df_abm, df_ode, paper_refs, out_path: Path):
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    for pop in POPS:
+        color = COLORS[pop]
+        pop_lc = pop.lower()
+        lbl = LABELS[pop]
+
+        if pop in paper_refs:
+            ref = paper_refs[pop]
+            ax.scatter(ref["day"], ref["count"],
+                       color=color, s=14, alpha=0.6, zorder=5)
+
+        if pop_lc in df_ode.columns:
+            ax.plot(df_ode["days"], df_ode[pop_lc],
+                    color=color, linewidth=2.0, linestyle="-",
+                    label=f"{lbl} ODE", zorder=4)
+
+        if pop_lc in df_abm.columns:
+            ax.plot(df_abm["days"], df_abm[pop_lc],
+                    color=color, linewidth=1.4, linestyle="--",
+                    alpha=0.85, label=f"{lbl} ABM", zorder=3)
+
+    ax.set_yscale("log")
+    ax.set_xlabel("Day")
+    ax.set_ylabel("Cell count (log scale)")
+    ax.set_title(
+        "Pancreatic Tumor Model — All Populations Overview\n"
+        "Solid: ODE  |  Dashed: ABM  |  Dots: Paper reference",
+        fontsize=12
+    )
+    ax.legend(ncol=3, fontsize=8, loc="upper left")
+    ax.grid(True, which="both", linestyle=":", alpha=0.35)
+
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=200, bbox_inches="tight")
+    print(f"Combined figure saved: {out_path}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--abm",    default="output/populations.csv",
+                        help="ABM populations CSV (default: output/populations.csv)")
+    parser.add_argument("--ode",    default="data-export/ode_reference.csv",
+                        help="ODE reference CSV")
+    parser.add_argument("--refs",   default="data-export",
+                        help="Directory containing *-Cells_scaled_global.csv")
+    parser.add_argument("--out",    default="data-export",
+                        help="Output directory for figures")
+    args = parser.parse_args()
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Try both the given path and the data-export copy
+    abm_path = Path(args.abm)
+    if not abm_path.exists():
+        abm_path = Path("data-export/populations.csv")
+    if not abm_path.exists():
+        print(f"[ERROR] ABM output not found at {args.abm} or data-export/populations.csv")
+        return 1
+
+    ode_path = Path(args.ode)
+    if not ode_path.exists():
+        print(f"[ERROR] ODE reference not found: {ode_path} — run scripts/ode_reference.py first")
+        return 1
+
+    df_abm = load_abm(abm_path)
+    df_ode = load_ode(ode_path)
+    paper_refs = load_paper_ref(Path(args.refs))
+
+    print(f"ABM:   {len(df_abm)} rows, days {df_abm['days'].iloc[0]:.0f}–{df_abm['days'].iloc[-1]:.0f}")
+    print(f"ODE:   {len(df_ode)} rows, days {df_ode['days'].iloc[0]:.0f}–{df_ode['days'].iloc[-1]:.0f}")
+    print(f"Paper refs loaded: {sorted(paper_refs.keys())}")
+
+    plot_grid(df_abm, df_ode, paper_refs, out_dir / "comparison_grid.png")
+    plot_combined(df_abm, df_ode, paper_refs, out_dir / "comparison_combined.png")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
