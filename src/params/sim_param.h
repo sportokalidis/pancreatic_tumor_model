@@ -47,7 +47,14 @@ struct SimParam : public ParamGroup {
   // Interaction mode
   // --------------------------------------------------------------------------
   bool   use_local_counts = false;
-  real_t local_radius_um  = 12.0;
+  real_t local_radius_um  = 36.0;   // 3 cell diameters — paracrine signaling range
+  real_t immune_step_um   = 10.0;   // Gaussian σ per coordinate per step for immune random walk
+
+  // --------------------------------------------------------------------------
+  // Spatial initialization
+  // --------------------------------------------------------------------------
+  bool   use_sphere_init      = false;
+  real_t tumor_sphere_radius  = 120.0;  // µm — compact tumor mass at domain center
 
   // --------------------------------------------------------------------------
   // Initial conditions (paper values ÷ S)

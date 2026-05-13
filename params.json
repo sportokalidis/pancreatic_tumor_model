@@ -9,13 +9,18 @@
   "total_days": 100,
   "output_dir": "output",
 
-  "dt_minutes": 1.0,
+  "dt_minutes": 10.0,
   "min_bound": 0.0,
   "max_bound": 400.0,
   "cell_radius_um": 6.0,
 
-  "use_local_counts": false,
-  "local_radius_um": 12.0,
+  "use_local_counts": true,
+  "local_radius_um": 36.0,
+  "immune_step_um": 10.0,
+
+  "_spatial_init": "Sphere init disabled: dc assumes uniform distribution; sphere packing creates 8x higher local density than dc predicts, suppressing tumor growth. Re-enable with proper spatial calibration.",
+  "use_sphere_init": false,
+  "tumor_sphere_radius": 120.0,
 
   "_ics": "Initial conditions: paper values / S",
   "C0": 4886,

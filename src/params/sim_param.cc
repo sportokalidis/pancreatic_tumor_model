@@ -61,6 +61,11 @@ void SimParam::LoadParams(const std::string& filename) {
   // Interaction mode
   load_bool("use_local_counts", use_local_counts);
   load_real("local_radius_um",  local_radius_um);
+  load_real("immune_step_um",   immune_step_um);
+
+  // Spatial initialization
+  load_bool("use_sphere_init",     use_sphere_init);
+  load_real("tumor_sphere_radius", tumor_sphere_radius);
 
   // Initial counts
   load_size("C0", C0);
@@ -141,7 +146,10 @@ void SimParam::PrintParams() const {
             << "  domain=[" << min_bound << "," << max_bound << "]"
             << "  cell_radius=" << cell_radius_um << " um\n"
             << "  use_local=" << use_local_counts
-            << "  local_radius=" << local_radius_um << " um\n"
+            << "  local_radius=" << local_radius_um << " um"
+            << "  immune_step=" << immune_step_um << " um"
+            << "  sphere_init=" << use_sphere_init
+            << "  sphere_r=" << tumor_sphere_radius << " um\n"
             << "  C0=" << C0 << " P0=" << P0 << " E0=" << E0
             << " N0=" << N0 << " H0=" << H0 << " R0=" << R0 << "\n"
             << "  K_C=" << K_C << " K_P=" << K_P << "\n"
