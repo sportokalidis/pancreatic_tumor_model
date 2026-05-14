@@ -865,11 +865,11 @@ inline int Simulate(int argc, const char** argv) {
   // Phase 1: read JSON into a temporary SimParam to extract bounds/dt for the
   // setup lambda. The actual params are loaded into sp after Simulation is up.
   // Optional --config <file> flag overrides the default params.json path.
-  std::string config_file = "params.json";
+  std::string config_file  = "params.json";
+  std::string output_override;
   for (int i = 1; i + 1 < argc; ++i) {
-    if (std::string(argv[i]) == "--config") {
-      config_file = argv[i + 1];
-    }
+    if (std::string(argv[i]) == "--config")  config_file     = argv[i + 1];
+    if (std::string(argv[i]) == "--output")  output_override = argv[i + 1];
   }
 
   SimParam tmp;
@@ -889,6 +889,7 @@ inline int Simulate(int argc, const char** argv) {
   // returns correct values in all behaviors.
   auto* sp = const_cast<SimParam*>(sim.GetParam()->Get<SimParam>());
   sp->LoadParams(config_file);
+  if (!output_override.empty()) sp->output_dir = output_override;
   sp->PrintParams();
 
   // Disable mechanical forces — spatial positions are for local counting only;
