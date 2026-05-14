@@ -21,23 +21,29 @@ Goal: Full replication of Akman Yıldız et al. (2021), then spatial and treatme
 
 ---
 
-## Next — Drug Treatment (Paper Section 5)
+## Drug Treatment (Paper Section 5) — ✅ IMPLEMENTED, needs validation
 
-Priority: **HIGH** — direct paper replication milestone.
+Branch: `drug-treatment`
 
-The paper studies three drugs:
-- **Abraxane** (nab-Paclitaxel): reduces PSC activation (lowers `p_boost_from_C` / `c_boost_from_P`)
-- **Gemcitabine**: increases tumor death rate (raises `c_base_death` term or reduces `c_base_div`)
-- **Anti-CD47**: blocks "don't eat me" signal → increases NK killing (`c_kill_by_N` ×10–100)
+Implementation follows Eqs. 5.1–5.7 exactly:
+- Drug concentration `M(t)` — exponential decay (`exp(-γ·dt)`) + discrete injection pulses
+- Kill terms `c_x·(1−e^{−M})·x` applied to all 6 populations per step (via `DrugState` singleton)
+- Anti-CD47: `+acd47_e_boost` per-cell CTL proliferation rate when active
+- Thread-safe `DrugState` (same double-checked locking pattern as `GlobalCensus`)
+- All 28 parameters in `SimParam` + `params.json`; all flags default `false`
+- `--config <file>` CLI flag added → fast testing without touching `params.json`
+- `params_fast_test.json` added (20 days, dt=60 min, ~2.5 s runtime)
+- `populations.csv` now includes `M_gem`, `M_abr` columns
 
-### Implementation steps
+Verified (fast test): Gemcitabine injection fires at paper day 14 (and day 21), M decays correctly (γ=5.54), tumor drops by ~80% on injection day.
 
-- [ ] Add treatment schedule to `SimParam`: `std::map<int, double> treatment_days` per drug type
-- [ ] Add `ScheduledTreatmentOp` class (one per drug) — pattern: CARTopiaX `SpawnCart` in `src/utils/utils_aux.h` / `utils_aux.cc`. Operator checks `sim_day` against schedule and multiplies relevant rate params for that day.
-- [ ] Register ops in `Simulate()` after scheduler setup
-- [ ] Add treatment params to `params.json`: `abraxane_days`, `gem_days`, `anti_cd47_days`, `abraxane_dose`, etc.
-- [ ] Run and validate against paper Fig. 3 (single drug) and Fig. 4 (combination)
-- [ ] Archive treatment runs with descriptive notes
+### Remaining
+
+- [ ] Tune `gem_dose`, `abr_dose` against paper Fig. 5 (single drug) — dose units are normalized M, paper doesn't state explicit values; calibrate visually
+- [ ] Extend `scripts/ode_reference.py` to solve Eqs. 5.1–5.7 with treatment (needed for R² comparison)
+- [ ] Update `data-export/create-plots.py` to overlay treatment ABM vs treatment ODE
+- [ ] Validate combination protocols (Gem+Abr, Gem+Abr+ACD47) against paper Fig. 5
+- [ ] Archive treatment runs with `scripts/save_run.py`
 
 ---
 
@@ -86,7 +92,7 @@ Paper reports PRCC of C and E at days 7, 35, 70, 150 across 1000 LHS samples.
   done
   wait
   ```
-  Requires adding `--config` and `--output` CLI flags to `main.cc`
+  `--config` flag ✅ added (drug-treatment branch). `--output` flag still needed.
 - [ ] `scripts/prcc.py` — PRCC computation:
   - Load all `lhs/out_*.csv` + `lhs/params_*.json` into a DataFrame
   - Rank-transform inputs and outputs
@@ -112,5 +118,5 @@ Paper reports PRCC of C and E at days 7, 35, 70, 150 across 1000 LHS samples.
 | Sec. 2 — ODE model | Eqs. 2.1–2.6, Table 1 | ✅ Complete |
 | Sec. 3 — Baseline dynamics | Fig. 2, untreated 100 days | ✅ Complete |
 | Sec. 4 — Sensitivity | PRCC, Fig. 3 | ☐ Pending |
-| Sec. 5 — Drug treatment | Abraxane, Gemcitabine, Anti-CD47, Figs. 3–4 | ☐ Pending |
+| Sec. 5 — Drug treatment | Abraxane, Gemcitabine, Anti-CD47, Figs. 3–4 | 🔶 Implemented, validation pending |
 | Sec. 6 — CSC extension | 7th variable S, relapse dynamics, Fig. 5 | ☐ Pending |

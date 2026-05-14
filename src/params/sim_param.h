@@ -150,6 +150,44 @@ struct SimParam : public ParamGroup {
   real_t r_decay         = 1.0e-5;      // δ_r    natural decay
 
   // --------------------------------------------------------------------------
+  // Drug treatment (Paper Section 5, Eqs. 5.1–5.7)
+  //
+  // Drug concentration M evolves as: dM/dt = -γ·M + v_b(t)
+  // Drug kill per cell type x: rate += c_x·(1−e^{−M})
+  // Anti-CD47: +α·E·v_a(t) extra CTL proliferation when active
+  //
+  // Schedules use paper-day coordinates (simulation day 0 = paper day 7).
+  // Injection at treat_start_day, then every *_freq_days, up to *_end_day.
+  // --------------------------------------------------------------------------
+  bool treat_gem   = false;  // enable Gemcitabine
+  bool treat_abr   = false;  // enable Abraxane
+  bool treat_acd47 = false;  // enable Anti-CD47
+
+  real_t treat_start_day = 14.0;  // paper day all treatments begin
+
+  // Gemcitabine — Table 2 values; c_* in day⁻¹
+  real_t gem_gamma    = 5.54;          // γ_Gem  drug decay rate
+  real_t gem_dose     = 1.0;           // M increment per injection
+  real_t gem_freq_days = 7.0;          // injection interval (days)
+  real_t gem_end_day  = 56.0;          // last paper day of treatment
+  real_t gem_c_c      = 10.0;          // kill rate for C
+  real_t gem_c_p      = 7.5;           // kill rate for P
+  real_t gem_c_immune = 1.8;           // kill rate for E, N, H, R
+
+  // Abraxane — Table 2 values
+  real_t abr_gamma    = 0.6161308;
+  real_t abr_dose     = 1.0;
+  real_t abr_freq_days = 7.0;
+  real_t abr_end_day  = 28.0;
+  real_t abr_c_c      = 10.0;
+  real_t abr_c_p      = 10.0;
+  real_t abr_c_immune = 6.4;
+
+  // Anti-CD47 — α·E·v_a term: effective per-cell CTL boost rate (day⁻¹)
+  real_t acd47_end_day  = 35.0;
+  real_t acd47_e_boost  = 0.5;         // α·v_a_dose (tune vs Fig. 5)
+
+  // --------------------------------------------------------------------------
   // Visualization colors
   // --------------------------------------------------------------------------
   int color_tumor     = 8;

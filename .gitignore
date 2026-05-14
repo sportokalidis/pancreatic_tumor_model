@@ -3,6 +3,7 @@ output/
 CLAUDE.md
 docs/*
 !docs/TODO.md
+!docs/implementation_plan.md
 *.pdf
 
 **/.DS_Store

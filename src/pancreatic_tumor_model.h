@@ -278,6 +278,78 @@ inline Counts GetGlobalCounts() {
   return gc.Get();
 }
 
+// ============================================================================
+// Drug state (Paper Section 5)
+// Holds M_gem, M_abr (drug concentrations) and the Anti-CD47 active flag.
+// Updated at most once per step via double-checked locking (same pattern as
+// GlobalCensus) so behaviors reading it always see the step-consistent value.
+// ============================================================================
+struct DrugState {
+  std::atomic<size_t> step_cached{std::numeric_limits<size_t>::max()};
+  std::mutex mtx;
+
+  real_t M_gem = 0.0;
+  real_t M_abr = 0.0;
+  bool   acd47_active = false;
+
+  static DrugState& Instance() { static DrugState ds; return ds; }
+
+  void RefreshIfNeeded() {
+    auto* sim   = Simulation::GetActive();
+    size_t step = sim->GetScheduler()->GetSimulatedSteps();
+    if (step_cached.load(std::memory_order_acquire) == step) return;
+
+    std::lock_guard<std::mutex> lock(mtx);
+    if (step_cached.load(std::memory_order_relaxed) == step) return;
+
+    const auto* sp = SP();
+    // Short-circuit: no treatment enabled
+    if (!sp->treat_gem && !sp->treat_abr && !sp->treat_acd47) {
+      step_cached.store(step, std::memory_order_release);
+      return;
+    }
+
+    const real_t dt_day    = sp->dt_minutes / 1440.0;
+    const real_t day_off   = 7.0;  // paper day 7 = simulation day 0
+    const real_t spd_f     = 1440.0 / sp->dt_minutes;  // steps per day
+
+    // Convert paper-day to step index
+    auto s_of = [&](real_t pday) -> size_t {
+      real_t sim_day = pday - day_off;
+      return (sim_day <= 0.0) ? 0 : static_cast<size_t>(std::round(sim_day * spd_f));
+    };
+    // True if this step falls on an injection grid point
+    auto is_inject = [&](size_t s0, size_t s1, size_t freq) -> bool {
+      return step >= s0 && step <= s1 && ((step - s0) % freq == 0);
+    };
+
+    // Gemcitabine: exponential decay then pulse injection
+    if (sp->treat_gem) {
+      M_gem *= std::exp(-sp->gem_gamma * dt_day);
+      size_t s0   = s_of(sp->treat_start_day);
+      size_t s1   = s_of(sp->gem_end_day);
+      size_t freq = static_cast<size_t>(std::round(sp->gem_freq_days * spd_f));
+      if (freq > 0 && is_inject(s0, s1, freq)) M_gem += sp->gem_dose;
+    }
+
+    // Abraxane
+    if (sp->treat_abr) {
+      M_abr *= std::exp(-sp->abr_gamma * dt_day);
+      size_t s0   = s_of(sp->treat_start_day);
+      size_t s1   = s_of(sp->abr_end_day);
+      size_t freq = static_cast<size_t>(std::round(sp->abr_freq_days * spd_f));
+      if (freq > 0 && is_inject(s0, s1, freq)) M_abr += sp->abr_dose;
+    }
+
+    // Anti-CD47: binary active flag (no PK curve)
+    acd47_active = sp->treat_acd47
+                && step >= s_of(sp->treat_start_day)
+                && step <= s_of(sp->acd47_end_day);
+
+    step_cached.store(step, std::memory_order_release);
+  }
+};
+
 // Volume ratio V_total / V_local.
 // In global mode = 1.0 (no adjustment).
 // In local mode, multiplying raw local counts by this factor gives their
@@ -324,16 +396,18 @@ struct PopulationLogger {
     std::filesystem::create_directories(dir);
     std::string path = dir + "/populations.csv";
     csv.open(path);
-    csv << "step,days,C,P,E,N,H,R,total\n";
+    csv << "step,days,C,P,E,N,H,R,total,M_gem,M_abr\n";
     csv.flush();
   }
 
   void Write(size_t step, real_t t_day,
-             size_t C, size_t P, size_t E, size_t N, size_t H, size_t R) {
+             size_t C, size_t P, size_t E, size_t N, size_t H, size_t R,
+             real_t M_gem = 0.0, real_t M_abr = 0.0) {
     csv << step << "," << t_day << ","
         << C << "," << P << "," << E << ","
         << N << "," << H << "," << R << ","
-        << (C + P + E + N + H + R) << "\n";
+        << (C + P + E + N + H + R) << ","
+        << M_gem << "," << M_abr << "\n";
     csv.flush();
   }
 };
@@ -364,6 +438,9 @@ class TumorBehavior : public Behavior {
     const real_t dt_day = sp->dt_minutes / 1440.0;
     const EffCounts cnt(GetCounts(*c), DensityCompensation());
 
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+
     // --- Division (Eq. 2.1 growth terms) ---
     // (k_c + mu_c·P)·C·(1-C/K_C): mu_c·P is LINEAR in P (not Hill)
     // Crowding uses global C — K_C is a systemic resource/space constraint.
@@ -393,7 +470,11 @@ class TumorBehavior : public Behavior {
     real_t killE = sp->c_kill_by_E * cnt.E * inhibit_R;
     real_t killN = sp->c_kill_by_N * cnt.N;
 
-    if (rng->Uniform(0, 1) < ProbFromRate(killE + killN, dt_day)) {
+    // --- Drug kill (Eq. 5.1): c_c·(1−e^{−M})·C ---
+    real_t drug_kill = sp->gem_c_c * (1.0 - std::exp(-ds.M_gem))
+                     + sp->abr_c_c * (1.0 - std::exp(-ds.M_abr));
+
+    if (rng->Uniform(0, 1) < ProbFromRate(killE + killN + drug_kill, dt_day)) {
       ctxt->RemoveAgent(c->GetUid());
     }
   }
@@ -414,8 +495,13 @@ class PSCBehavior : public Behavior {
     const real_t dt_day = sp->dt_minutes / 1440.0;
     const EffCounts cnt(GetCounts(*psc), DensityCompensation());
 
-    // --- Death (lambda_p*P) — checked independently ---
-    if (rng->Uniform(0, 1) < ProbFromRate(sp->p_base_death, dt_day)) {
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+
+    // --- Death (Eq. 5.2): lambda_p·P + c_p·(1−e^{−M})·P ---
+    real_t drug_kill = sp->gem_c_p * (1.0 - std::exp(-ds.M_gem))
+                     + sp->abr_c_p * (1.0 - std::exp(-ds.M_abr));
+    if (rng->Uniform(0, 1) < ProbFromRate(sp->p_base_death + drug_kill, dt_day)) {
       ctxt->RemoveAgent(psc->GetUid());
       return;
     }
@@ -459,22 +545,28 @@ class EffectorBehavior : public Behavior {
     const real_t dt_day = sp->dt_minutes / 1440.0;
     const EffCounts cnt(GetCounts(*e), DensityCompensation());
 
-    // --- Death (Eq. 2.3 death terms): b_e·E + c_e·E·C + δ_e·R·E ---
-    // c_e·C is local (direct tumor contact). δ_e·R uses global R (cytokine-mediated).
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+
+    // --- Death (Eq. 5.3 death terms): b_e + c_e·C + δ_e·R + c_immune·(1−e^{−M}) ---
     const real_t R_global_e = sp->use_local_counts
         ? static_cast<real_t>(GetGlobalCounts().R) : cnt.R;
+    real_t drug_kill = sp->gem_c_immune * (1.0 - std::exp(-ds.M_gem))
+                     + sp->abr_c_immune * (1.0 - std::exp(-ds.M_abr));
     real_t die = sp->e_base_death
-               + sp->e_inact_by_C * cnt.C       // c_e·C (local)
-               + sp->e_suppr_by_R * R_global_e;  // δ_e·R (global)
+               + sp->e_inact_by_C * cnt.C
+               + sp->e_suppr_by_R * R_global_e
+               + drug_kill;
 
     if (rng->Uniform(0, 1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(e->GetUid());
       return;
     }
 
-    // --- Per-cell proliferation (Eq. 2.3, p_e·H·E/(g_e+H) term) ---
-    // Constant influx a_e handled by SourceBehavior.
+    // --- Per-cell proliferation (Eq. 2.3 + Eq. 5.3 Anti-CD47 term) ---
+    // p_e·H/(g_e+H) from the ODE; α·v_a boost when Anti-CD47 is active.
     real_t div_rate = sp->e_help_from_H * Sat(cnt.H, sp->e_help_from_H_K);
+    if (ds.acd47_active) div_rate += sp->acd47_e_boost;
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       e->Divide();
@@ -506,12 +598,18 @@ class NKBehavior : public Behavior {
     const real_t dt_day = sp->dt_minutes / 1440.0;
     const EffCounts cnt(GetCounts(*n), DensityCompensation());
 
-    // --- Death (Eq. 2.4 death terms): b_n·N + c_n·N·C + δ_n·R·N ---
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+
+    // --- Death (Eq. 5.4 death terms): b_n + c_n·C + δ_n·R + c_immune·(1−e^{−M}) ---
     const real_t R_global_n = sp->use_local_counts
         ? static_cast<real_t>(GetGlobalCounts().R) : cnt.R;
+    real_t drug_kill = sp->gem_c_immune * (1.0 - std::exp(-ds.M_gem))
+                     + sp->abr_c_immune * (1.0 - std::exp(-ds.M_abr));
     real_t die = sp->n_base_death
-               + sp->n_inact_by_C * cnt.C       // c_n·C (local, direct contact)
-               + sp->n_suppr_by_R * R_global_n;  // δ_n·R (global, cytokine)
+               + sp->n_inact_by_C * cnt.C
+               + sp->n_suppr_by_R * R_global_n
+               + drug_kill;
 
     if (rng->Uniform(0, 1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(n->GetUid());
@@ -552,11 +650,17 @@ class HelperBehavior : public Behavior {
     const real_t dt_day = sp->dt_minutes / 1440.0;
     const EffCounts cnt(GetCounts(*h), DensityCompensation());
 
-    // --- Death (Eq. 2.5 death terms): b_h·H + δ_h·R·H ---
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+
+    // --- Death (Eq. 5.5 death terms): b_h + δ_h·R + c_immune·(1−e^{−M}) ---
     const real_t R_global_h = sp->use_local_counts
         ? static_cast<real_t>(GetGlobalCounts().R) : cnt.R;
+    real_t drug_kill = sp->gem_c_immune * (1.0 - std::exp(-ds.M_gem))
+                     + sp->abr_c_immune * (1.0 - std::exp(-ds.M_abr));
     real_t die = sp->h_base_death
-               + sp->h_suppr_by_R * R_global_h;  // δ_h·R (global, cytokine)
+               + sp->h_suppr_by_R * R_global_h
+               + drug_kill;
 
     if (rng->Uniform(0, 1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(h->GetUid());
@@ -597,10 +701,15 @@ class TRegBehavior : public Behavior {
     const real_t dt_day = sp->dt_minutes / 1440.0;
     const EffCounts cnt(GetCounts(*r), DensityCompensation());
 
-    // --- Death (Eq. 2.6 death terms): δ_r·R + r·N·R ---
-    // r·N is bilinear in N.
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+
+    // --- Death (Eq. 5.6 death terms): δ_r + r·N + c_immune·(1−e^{−M}) ---
+    real_t drug_kill = sp->gem_c_immune * (1.0 - std::exp(-ds.M_gem))
+                     + sp->abr_c_immune * (1.0 - std::exp(-ds.M_abr));
     real_t die = sp->r_decay
-               + sp->r_cleared_by_N * cnt.N;  // r·N (bilinear)
+               + sp->r_cleared_by_N * cnt.N
+               + drug_kill;
 
     if (rng->Uniform(0, 1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(r->GetUid());
@@ -721,19 +830,26 @@ class ReportPopCounts : public Behavior {
 
     if (steps % steps_per_day != 0) return;
 
-    // Reuse the census already computed this step by the cell behaviors.
+    // Reuse the census and drug state already computed this step by behaviors.
     auto& gc = GlobalCensus::Instance();
     gc.RefreshIfNeeded();
     const Counts& c = gc.Get();
+
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
 
     const real_t day_since_start = t_day + 7.0;  // paper starts at day 7
     std::cout << "[day " << day_since_start << "] "
               << "C=" << c.C << " P=" << c.P
               << " E=" << c.E << " N=" << c.N
-              << " H=" << c.H << " R=" << c.R << "\n";
+              << " H=" << c.H << " R=" << c.R;
+    if (ds.M_gem > 1e-9 || ds.M_abr > 1e-9)
+      std::cout << "  M_gem=" << ds.M_gem << " M_abr=" << ds.M_abr;
+    std::cout << "\n";
 
     PopulationLogger::Instance().Write(
-        steps, day_since_start, c.C, c.P, c.E, c.N, c.H, c.R);
+        steps, day_since_start, c.C, c.P, c.E, c.N, c.H, c.R,
+        ds.M_gem, ds.M_abr);
   }
 };
 
@@ -748,8 +864,16 @@ inline int Simulate(int argc, const char** argv) {
 
   // Phase 1: read JSON into a temporary SimParam to extract bounds/dt for the
   // setup lambda. The actual params are loaded into sp after Simulation is up.
+  // Optional --config <file> flag overrides the default params.json path.
+  std::string config_file = "params.json";
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (std::string(argv[i]) == "--config") {
+      config_file = argv[i + 1];
+    }
+  }
+
   SimParam tmp;
-  tmp.LoadParams("params.json");
+  tmp.LoadParams(config_file);
 
   auto setp = [&tmp](Param* param) {
     param->bound_space          = Param::BoundSpaceMode::kClosed;
@@ -764,7 +888,7 @@ inline int Simulate(int argc, const char** argv) {
   // Phase 2: overwrite the live SimParam with the JSON-loaded values so SP()
   // returns correct values in all behaviors.
   auto* sp = const_cast<SimParam*>(sim.GetParam()->Get<SimParam>());
-  *sp = tmp;
+  sp->LoadParams(config_file);
   sp->PrintParams();
 
   // Disable mechanical forces — spatial positions are for local counting only;

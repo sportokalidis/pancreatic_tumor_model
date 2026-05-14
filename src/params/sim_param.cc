@@ -128,6 +128,32 @@ void SimParam::LoadParams(const std::string& filename) {
   load_real("r_cleared_by_N",  r_cleared_by_N);
   load_real("r_decay",         r_decay);
 
+  // Drug treatment (Section 5)
+  load_bool("treat_gem",   treat_gem);
+  load_bool("treat_abr",   treat_abr);
+  load_bool("treat_acd47", treat_acd47);
+
+  load_real("treat_start_day", treat_start_day);
+
+  load_real("gem_gamma",     gem_gamma);
+  load_real("gem_dose",      gem_dose);
+  load_real("gem_freq_days", gem_freq_days);
+  load_real("gem_end_day",   gem_end_day);
+  load_real("gem_c_c",       gem_c_c);
+  load_real("gem_c_p",       gem_c_p);
+  load_real("gem_c_immune",  gem_c_immune);
+
+  load_real("abr_gamma",     abr_gamma);
+  load_real("abr_dose",      abr_dose);
+  load_real("abr_freq_days", abr_freq_days);
+  load_real("abr_end_day",   abr_end_day);
+  load_real("abr_c_c",       abr_c_c);
+  load_real("abr_c_p",       abr_c_p);
+  load_real("abr_c_immune",  abr_c_immune);
+
+  load_real("acd47_end_day",  acd47_end_day);
+  load_real("acd47_e_boost",  acd47_e_boost);
+
   // Colors
   load_int("color_tumor",     color_tumor);
   load_int("color_tumor_div", color_tumor_div);
@@ -161,6 +187,10 @@ void SimParam::PrintParams() const {
             << "  e_base_death=" << e_base_death << "\n"
             << "  r_base_src=" << r_base_src
             << "  r_decay=" << r_decay << "\n"
+            << "  treat_gem=" << treat_gem
+            << "  treat_abr=" << treat_abr
+            << "  treat_acd47=" << treat_acd47
+            << "  treat_start=" << treat_start_day << " day\n"
             << "=== end SimParam ===\n";
 }
 

@@ -83,6 +83,35 @@
   "r_cleared_by_N":  1.0e-6,
   "r_decay":         1.0e-5,
 
+  "_treatment": "Drug treatment (Section 5, Eqs 5.1-5.7). Set treat_* flags to enable. Schedule uses paper-day coords (sim day 0 = paper day 7).",
+  "treat_gem":   false,
+  "treat_abr":   false,
+  "treat_acd47": false,
+
+  "treat_start_day": 14.0,
+
+  "_gem": "Gemcitabine — Table 2. gamma=decay rate, dose=M added per injection, freq=injection interval (days), c_*=kill rates (day^-1).",
+  "gem_gamma":     5.54,
+  "gem_dose":      1.0,
+  "gem_freq_days": 7.0,
+  "gem_end_day":   56.0,
+  "gem_c_c":       10.0,
+  "gem_c_p":       7.5,
+  "gem_c_immune":  1.8,
+
+  "_abr": "Abraxane — Table 2.",
+  "abr_gamma":     0.6161308,
+  "abr_dose":      1.0,
+  "abr_freq_days": 7.0,
+  "abr_end_day":   28.0,
+  "abr_c_c":       10.0,
+  "abr_c_p":       10.0,
+  "abr_c_immune":  6.4,
+
+  "_acd47": "Anti-CD47 — alpha*v_a term for CTL boost. acd47_e_boost = effective rate (day^-1). Tune vs Fig 5.",
+  "acd47_end_day":  35.0,
+  "acd47_e_boost":  0.5,
+
   "color_tumor":     8,
   "color_tumor_div": 7,
   "color_psc":       4,

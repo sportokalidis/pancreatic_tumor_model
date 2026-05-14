@@ -1,0 +1,76 @@
+{
+  "_comment": "Fast smoke-test config: 20 days, dt=60 min (24 steps/day), small populations. Runs in ~5 seconds.",
+
+  "seed": 42,
+  "total_days": 20,
+  "output_dir": "/tmp/bdm_fast_test",
+
+  "dt_minutes": 60.0,
+  "min_bound": 0.0,
+  "max_bound": 200.0,
+  "cell_radius_um": 6.0,
+
+  "use_local_counts": false,
+  "local_radius_um": 36.0,
+  "immune_step_um": 10.0,
+  "use_sphere_init": false,
+  "tumor_sphere_radius": 120.0,
+
+  "C0": 100, "P0": 2, "E0": 80, "N0": 50, "H0": 200, "R0": 20,
+
+  "K_C": 8766.0, "K_P": 4383.0, "K_E": 3000.0,
+  "K_N": 3000.0, "K_H": 4000.0, "K_R": 800000.0,
+
+  "c_base_div":     0.0886933,
+  "c_boost_from_P": 2.0236e-6,
+  "c_kill_by_E":    13.0,
+  "c_kill_by_N":    7.13e-6,
+  "c_R_blocks_E":   34500.0,
+
+  "p_base_div":       0.00887,
+  "p_boost_from_C":   0.154955,
+  "p_boost_from_C_K": 560.0,
+  "p_base_death":     7.83296e-10,
+
+  "e_base_birth":    0.13,
+  "e_help_from_H":   0.125,
+  "e_help_from_H_K": 674490.0,
+  "e_inact_by_C":    3.42e-5,
+  "e_suppr_by_R":    1.0e-5,
+  "e_base_death":    0.027,
+
+  "n_base_birth":    0.13,
+  "n_help_from_H":   0.125,
+  "n_help_from_H_K": 674490.0,
+  "n_inact_by_C":    1.0e-6,
+  "n_suppr_by_R":    1.0e-5,
+  "n_base_death":    0.0412,
+
+  "h_base_birth":  0.36,
+  "h_self_act":    0.125,
+  "h_self_act_K":  674490.0,
+  "h_suppr_by_R":  1.0e-4,
+  "h_base_death":  2.0833e-4,
+
+  "r_base_src":      5.6,
+  "r_induced_by_E":  2.0e-4,
+  "r_induced_by_H":  4.0e-4,
+  "r_prolif_by_H":   0.125,
+  "r_prolif_by_H_K": 674490.0,
+  "r_cleared_by_N":  1.0e-6,
+  "r_decay":         1.0e-5,
+
+  "treat_gem":   false,
+  "treat_abr":   false,
+  "treat_acd47": false,
+
+  "treat_start_day": 14.0,
+  "gem_gamma":     5.54,   "gem_dose":      1.0, "gem_freq_days": 7.0, "gem_end_day": 56.0,
+  "gem_c_c":       10.0,   "gem_c_p":       7.5, "gem_c_immune":  1.8,
+  "abr_gamma":     0.6161308, "abr_dose":   1.0, "abr_freq_days": 7.0, "abr_end_day": 28.0,
+  "abr_c_c":       10.0,   "abr_c_p":      10.0, "abr_c_immune":  6.4,
+  "acd47_end_day": 35.0,   "acd47_e_boost": 0.5,
+
+  "color_tumor": 8, "color_tumor_div": 7, "color_psc": 4,
+  "color_eff": 5,   "color_nk": 3,       "color_helper": 6, "color_treg": 1
+}
