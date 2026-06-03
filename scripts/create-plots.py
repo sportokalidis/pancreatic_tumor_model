@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 from pathlib import Path
 
@@ -19,6 +20,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
+import matplotlib.patches as mpatches
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -196,24 +198,93 @@ def plot_combined(df_abm, df_ode, paper_refs, out_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Figure 3: Treatment comparison — C and E panels with window shading
+# ---------------------------------------------------------------------------
+def plot_treatment(df_abm, df_ode, params: dict, out_path: Path):
+    # Convert sim-day columns to paper-day for display
+    abm_pday = df_abm["days"] + 7
+    ode_pday = df_ode["days"] + 7
+
+    # Build list of treatment windows (paper days)
+    windows = []
+    start = params.get("treat_start_day", 14.0)
+    if params.get("treat_gem"):
+        windows.append(("GEM", start, params.get("gem_end_day", 56.0), "#e74c3c", 0.13))
+    if params.get("treat_abr"):
+        windows.append(("ABR", start, params.get("abr_end_day", 28.0), "#27ae60", 0.13))
+    if params.get("treat_acd47"):
+        windows.append(("ACD47", start, params.get("acd47_end_day", 35.0), "#2980b9", 0.10))
+
+    proto_parts = []
+    if params.get("treat_gem"):   proto_parts.append("Gemcitabine")
+    if params.get("treat_abr"):   proto_parts.append("Abraxane")
+    if params.get("treat_acd47"): proto_parts.append("Anti-CD47")
+    title = " + ".join(proto_parts) if proto_parts else "Untreated"
+
+    fig, (ax_c, ax_e) = plt.subplots(1, 2, figsize=(13, 5))
+    fig.suptitle(f"Drug Treatment: {title}\nABM vs ODE  |  sim days shown as paper days",
+                 fontsize=12)
+
+    for ax, col, col_label, color in [
+        (ax_c, "c", "Tumor cells (C)", COLORS["C"]),
+        (ax_e, "e", "CD8⁺ T cells (E)", COLORS["E"]),
+    ]:
+        col_up = col.upper()
+        handles = []
+
+        # Treatment windows
+        for w_name, w_start, w_end, w_color, w_alpha in windows:
+            ax.axvspan(w_start, w_end, color=w_color, alpha=w_alpha, zorder=1)
+            handles.append(mpatches.FancyArrow(0, 0, 0, 0,  # invisible placeholder
+                                               width=0, head_width=0, head_length=0,
+                                               color=w_color, alpha=w_alpha + 0.2,
+                                               label=f"{w_name} window"))
+
+        # ODE (solid)
+        if col in df_ode.columns:
+            line_ode, = ax.plot(ode_pday, df_ode[col], color=color, lw=2.2, zorder=3)
+            handles.insert(0, mlines.Line2D([], [], color=color, lw=2.2, label="ODE"))
+
+        # ABM (scatter) — columns are lowercased by load_abm
+        if col in df_abm.columns:
+            ax.scatter(abm_pday, df_abm[col], color=color, s=12, alpha=0.65, zorder=4)
+            handles.insert(1, mlines.Line2D([], [], color=color, marker="o",
+                                            linestyle="None", markersize=4, label="ABM"))
+
+        ax.set_xlabel("Paper day")
+        ax.set_ylabel(col_label)
+        ax.set_title(col_label)
+        ax.legend(handles=handles, fontsize=8, loc="best")
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    print(f"Treatment figure saved: {out_path}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--abm",    default="output/populations.csv",
-                        help="ABM populations CSV (default: output/populations.csv)")
-    parser.add_argument("--ode",    default="data-export/ode_reference.csv",
+    parser.add_argument("--abm",       default="output/populations.csv",
+                        help="ABM populations CSV")
+    parser.add_argument("--ode",       default="data-export/ode_reference.csv",
                         help="ODE reference CSV")
-    parser.add_argument("--refs",   default="data-export",
+    parser.add_argument("--refs",      default="data-export",
                         help="Directory containing *-Cells_scaled_global.csv")
-    parser.add_argument("--out",    default="data-export",
+    parser.add_argument("--out",       default="data-export",
                         help="Output directory for figures")
+    parser.add_argument("--treatment", action="store_true",
+                        help="Generate treatment comparison plot instead of baseline grid")
+    parser.add_argument("--params",    default="",
+                        help="params.json path — required with --treatment for window shading")
     args = parser.parse_args()
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Try both the given path and the data-export copy
     abm_path = Path(args.abm)
     if not abm_path.exists():
         abm_path = Path("data-export/populations.csv")
@@ -223,19 +294,25 @@ def main():
 
     ode_path = Path(args.ode)
     if not ode_path.exists():
-        print(f"[ERROR] ODE reference not found: {ode_path} — run scripts/ode_reference.py first")
+        print(f"[ERROR] ODE reference not found: {ode_path}")
         return 1
 
     df_abm = load_abm(abm_path)
     df_ode = load_ode(ode_path)
-    paper_refs = load_paper_ref(Path(args.refs))
 
-    print(f"ABM:   {len(df_abm)} rows, days {df_abm['days'].iloc[0]:.0f}–{df_abm['days'].iloc[-1]:.0f}")
-    print(f"ODE:   {len(df_ode)} rows, days {df_ode['days'].iloc[0]:.0f}–{df_ode['days'].iloc[-1]:.0f}")
-    print(f"Paper refs loaded: {sorted(paper_refs.keys())}")
-
-    plot_grid(df_abm, df_ode, paper_refs, out_dir / "comparison_grid.png")
-    plot_combined(df_abm, df_ode, paper_refs, out_dir / "comparison_combined.png")
+    if args.treatment:
+        params = {}
+        if args.params and Path(args.params).exists():
+            with open(args.params) as f:
+                params = {k: v for k, v in json.load(f).items() if not k.startswith("_")}
+        plot_treatment(df_abm, df_ode, params, out_dir / "treatment_comparison.png")
+    else:
+        paper_refs = load_paper_ref(Path(args.refs))
+        print(f"ABM:   {len(df_abm)} rows, days {df_abm['days'].iloc[0]:.0f}–{df_abm['days'].iloc[-1]:.0f}")
+        print(f"ODE:   {len(df_ode)} rows, days {df_ode['days'].iloc[0]:.0f}–{df_ode['days'].iloc[-1]:.0f}")
+        print(f"Paper refs loaded: {sorted(paper_refs.keys())}")
+        plot_grid(df_abm, df_ode, paper_refs, out_dir / "comparison_grid.png")
+        plot_combined(df_abm, df_ode, paper_refs, out_dir / "comparison_combined.png")
 
     return 0
 
