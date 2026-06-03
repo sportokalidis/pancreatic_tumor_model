@@ -1,10 +1,14 @@
 build/
 output/
-CLAUDE.md
-docs/*
-!docs/TODO.md
-!docs/implementation_plan.md
+docs/
 *.pdf
+
+# Generated run archives and experiment outputs
+runs/
+params.json.bak
+data-export/*.png
+data-export/ode_reference.csv
+data-export/ode_vs_abm.png
 
 **/.DS_Store
 

@@ -867,10 +867,18 @@ inline int Simulate(int argc, const char** argv) {
   // Optional --config <file> flag overrides the default params.json path.
   std::string config_file  = "params.json";
   std::string output_override;
-  for (int i = 1; i + 1 < argc; ++i) {
-    if (std::string(argv[i]) == "--config")  config_file     = argv[i + 1];
-    if (std::string(argv[i]) == "--output")  output_override = argv[i + 1];
+  std::vector<const char*> bdm_argv = {argv[0]};
+  for (int i = 1; i < argc; ++i) {
+    std::string a = argv[i];
+    if ((a == "--config" || a == "--output") && i + 1 < argc) {
+      if (a == "--config")  config_file     = argv[i + 1];
+      if (a == "--output")  output_override = argv[i + 1];
+      ++i;  // skip the value too
+    } else {
+      bdm_argv.push_back(argv[i]);
+    }
   }
+  int bdm_argc = static_cast<int>(bdm_argv.size());
 
   SimParam tmp;
   tmp.LoadParams(config_file);
@@ -882,7 +890,7 @@ inline int Simulate(int argc, const char** argv) {
     param->simulation_time_step = tmp.dt_minutes;
   };
 
-  Simulation sim(argc, argv, setp);
+  Simulation sim(bdm_argc, bdm_argv.data(), setp);
   sim.GetRandom()->SetSeed(tmp.seed);
 
   // Phase 2: overwrite the live SimParam with the JSON-loaded values so SP()
