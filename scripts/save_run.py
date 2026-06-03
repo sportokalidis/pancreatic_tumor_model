@@ -156,8 +156,9 @@ def main():
                         help="Path to params JSON (default: params.json)")
     parser.add_argument("--refs",     default="data-export",
                         help="Directory with *_scaled_global.csv paper references")
-    parser.add_argument("--runs-dir", default="runs",
-                        help="Root directory for archived runs (default: runs/)")
+    parser.add_argument("--runs-dir", default=None,
+                        help="Root directory for archived runs "
+                             "(default: runs_treatment/ for treatment, runs/ for baseline)")
     parser.add_argument("--label",    default="",
                         help="Optional label inserted into the run folder name (e.g. 'gem')")
     args = parser.parse_args()
@@ -165,7 +166,6 @@ def main():
     abm_path    = (REPO_ROOT / args.abm).resolve()
     params_path = (REPO_ROOT / args.params).resolve()
     refs_dir    = (REPO_ROOT / args.refs).resolve()
-    runs_dir    = (REPO_ROOT / args.runs_dir).resolve()
 
     for p, name in [(abm_path, "--abm"), (params_path, "--params")]:
         if not p.exists():
@@ -179,6 +179,9 @@ def main():
     seed        = params.get("seed", 0)
     is_treatment = any(params.get(f"treat_{d}", False) for d in ["gem", "abr", "acd47"])
     proto       = protocol_label(params)
+
+    default_dir = "runs_treatment" if is_treatment else "runs"
+    runs_dir    = (REPO_ROOT / (args.runs_dir or default_dir)).resolve()
     label       = args.label or (proto if is_treatment else "")
 
     ts     = datetime.now()
