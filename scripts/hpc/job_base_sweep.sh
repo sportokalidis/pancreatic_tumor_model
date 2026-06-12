@@ -25,8 +25,8 @@
 #SBATCH --job-name=bdm-sweep
 #SBATCH --array=0-4
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=32G
 #SBATCH --time=04:00:00
 #SBATCH --output=logs/slurm-sweep-%A-%a.out
 #SBATCH --error=logs/slurm-sweep-%A-%a.err
@@ -40,7 +40,7 @@ SEEDS=(42 123 456 789 1001 2024 3141 5926 9999 7777)
 SEED="${SEEDS[$SLURM_ARRAY_TASK_ID]}"
 NOTE="${NOTE:-sweep ${SCALE} seed=${SEED} task=${SLURM_ARRAY_TASK_ID}}"
 
-if [ ! -f "${SIF}" ]; then
+if [ ! -e "${SIF}" ]; then
   echo "[ERROR] Singularity image not found: ${SIF}" >&2
   echo "        Set BDM_SIF=/path/to/image.sif before submitting." >&2
   exit 1

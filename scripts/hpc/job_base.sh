@@ -20,8 +20,8 @@
 # ---------------------------------------------------------------------------
 #SBATCH --job-name=bdm-base
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=32G
 #SBATCH --time=04:00:00
 #SBATCH --output=logs/slurm-base-%j.out
 #SBATCH --error=logs/slurm-base-%j.err
@@ -31,7 +31,7 @@ SIF="${BDM_SIF:-/ceph/hpc/home/eustavrosp/biodynamo}"
 SCALE="${SCALE:-S1e4}"
 NOTE="${NOTE:-SLURM base scale=${SCALE}}"
 
-if [ ! -f "${SIF}" ]; then
+if [ ! -e "${SIF}" ]; then
   echo "[ERROR] Singularity image not found: ${SIF}" >&2
   echo "        Set BDM_SIF=/path/to/image.sif before submitting." >&2
   exit 1
