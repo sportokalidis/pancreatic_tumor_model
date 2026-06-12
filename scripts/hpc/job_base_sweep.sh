@@ -46,10 +46,23 @@ if [ ! -e "${SIF}" ]; then
   exit 1
 fi
 
-mkdir -p "${REPO_ROOT}/logs"
-echo "[job_base_sweep] array=${SLURM_ARRAY_JOB_ID:-local}[${SLURM_ARRAY_TASK_ID:-0}]  scale=${SCALE}  seed=${SEED}"
+_find_sing() {
+  command -v singularity 2>/dev/null || command -v apptainer 2>/dev/null || echo ""
+}
+SING="$(_find_sing)"
+if [ -z "${SING}" ] && command -v module &>/dev/null; then
+  module load singularity 2>/dev/null || module load apptainer 2>/dev/null || true
+  SING="$(_find_sing)"
+fi
+if [ -z "${SING}" ]; then
+  echo "[ERROR] singularity/apptainer not found. Load the module and resubmit." >&2
+  exit 1
+fi
 
-singularity exec --cleanenv "${SIF}" \
+mkdir -p "${REPO_ROOT}/logs"
+echo "[job_base_sweep] array=${SLURM_ARRAY_JOB_ID:-local}[${SLURM_ARRAY_TASK_ID:-0}]  scale=${SCALE}  seed=${SEED}  sing=${SING}"
+
+"${SING}" exec --cleanenv "${SIF}" \
   bash "${REPO_ROOT}/scripts/hpc/run_direct.sh" \
   --scale      "${SCALE}" \
   --seed       "${SEED}" \

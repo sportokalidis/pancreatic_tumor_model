@@ -37,6 +37,20 @@ if [ ! -e "${SIF}" ]; then
   exit 1
 fi
 
+# Locate singularity/apptainer — compute nodes may need a module load
+_find_sing() {
+  command -v singularity 2>/dev/null || command -v apptainer 2>/dev/null || echo ""
+}
+SING="$(_find_sing)"
+if [ -z "${SING}" ] && command -v module &>/dev/null; then
+  module load singularity 2>/dev/null || module load apptainer 2>/dev/null || true
+  SING="$(_find_sing)"
+fi
+if [ -z "${SING}" ]; then
+  echo "[ERROR] singularity/apptainer not found. Load the module and resubmit." >&2
+  exit 1
+fi
+
 mkdir -p "${REPO_ROOT}/logs"
 
 EXTRA_ARGS=()
@@ -44,9 +58,9 @@ EXTRA_ARGS=()
 [ -n "${THREADS:-}" ] && EXTRA_ARGS+=(--threads "${THREADS}")
 
 echo "[job_base] scale=${SCALE}  sif=$(basename "${SIF}")  node=$(hostname)"
-echo "           SLURM_JOB_ID=${SLURM_JOB_ID:-local}"
+echo "           sing=${SING}  SLURM_JOB_ID=${SLURM_JOB_ID:-local}"
 
-singularity exec --cleanenv "${SIF}" \
+"${SING}" exec --cleanenv "${SIF}" \
   bash "${REPO_ROOT}/scripts/hpc/run_direct.sh" \
   --scale      "${SCALE}" \
   --skip-build \
