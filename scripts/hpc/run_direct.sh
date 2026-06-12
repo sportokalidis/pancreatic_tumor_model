@@ -1,18 +1,35 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# run_direct.sh — run all 4 treatment protocols WITHOUT SLURM.
+# run_direct.sh — run the ABM WITHOUT SLURM (Apptainer / interactive node).
 #
-# Designed for Apptainer/Singularity containers and interactive HPC nodes
-# where sbatch is not available.
+# Two modes:
+#   --base (default)   Single run of the base (no-treatment) model.
+#                      Uses params.json or params_S<scale>.json.
+#   --treatment        Run all 4 treatment protocols (treatment branch only).
 #
 # Usage:
-#   bash scripts/hpc/run_direct.sh [OPTIONS]
+#   # Base model, default scale S=1e5
+#   bash scripts/hpc/run_direct.sh
+#
+#   # Base model, 10× more agents (S=1e4)
+#   bash scripts/hpc/run_direct.sh --scale S1e4
+#
+#   # Base model, 100× more agents (S=1e3) — needs more RAM/time
+#   bash scripts/hpc/run_direct.sh --scale S1e3
+#
+#   # Treatment protocols (4 runs, sequential)
+#   bash scripts/hpc/run_direct.sh --treatment
+#
+#   # Treatment protocols, parallel background jobs
+#   bash scripts/hpc/run_direct.sh --treatment --parallel
 #
 # Options:
-#   --scale LABEL      S1e5 (default) or S1e4
-#   --protocols LIST   Comma-separated subset (default: acd47,gem,abr,abr_acd47)
-#   --threads N        OMP threads per protocol (default: auto = nproc/4)
-#   --parallel         Run all protocols simultaneously in the background
+#   --scale LABEL      S1e5 (default) | S1e4 | S1e3
+#   --treatment        Run all 4 treatment protocols instead of base
+#   --protocols LIST   With --treatment: comma-separated subset
+#                      (default: acd47,gem,abr,abr_acd47)
+#   --threads N        OMP_NUM_THREADS (default: auto)
+#   --parallel         Run protocols in background simultaneously
 #   --skip-build       Skip cmake build (binary must already exist)
 #   --note TEXT        Label stored in the run archive
 #
@@ -27,8 +44,9 @@ source "${REPO_ROOT}/scripts/hpc/env.sh"
 
 # ---- defaults ---------------------------------------------------------------
 SCALE="S1e5"
+MODE="base"
 PROTOCOLS="acd47,gem,abr,abr_acd47"
-THREADS=""          # empty → computed below
+THREADS=""
 PARALLEL=false
 SKIP_BUILD=false
 NOTE="HPC direct run"
@@ -36,6 +54,7 @@ NOTE="HPC direct run"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --scale)      SCALE="$2";     shift 2 ;;
+    --treatment)  MODE="treatment"; shift ;;
     --protocols)  PROTOCOLS="$2"; shift 2 ;;
     --threads)    THREADS="$2";   shift 2 ;;
     --parallel)   PARALLEL=true;  shift ;;
@@ -61,31 +80,88 @@ fi
 
 if [ ! -f "${BINARY}" ]; then
   echo "[ERROR] Binary not found: ${BINARY}" >&2
-  echo "        Run without --skip-build first." >&2
-  exit 1
+  echo "        Remove --skip-build to rebuild." >&2; exit 1
 fi
 
 # ---- thread count -----------------------------------------------------------
 NCPU=$(nproc 2>/dev/null || echo 4)
-IFS=',' read -ra PROTO_LIST <<< "${PROTOCOLS}"
-N_PROTO=${#PROTO_LIST[@]}
-
 if [ -z "${THREADS}" ]; then
-  # Give each protocol a fair share; at least 1
-  THREADS=$(( NCPU / N_PROTO ))
-  [ "${THREADS}" -lt 1 ] && THREADS=1
+  if [ "${MODE}" = "base" ]; then
+    THREADS="${NCPU}"
+  else
+    IFS=',' read -ra _TMP <<< "${PROTOCOLS}"
+    N_PROTO=${#_TMP[@]}
+    THREADS=$(( NCPU / N_PROTO ))
+    [ "${THREADS}" -lt 1 ] && THREADS=1
+  fi
 fi
 export OMP_NUM_THREADS="${THREADS}"
-echo "[2/2] Running ${N_PROTO} protocols  (OMP_NUM_THREADS=${THREADS}  parallel=${PARALLEL})"
 
-# ---- run protocols ----------------------------------------------------------
 SEED=$(${PYTHON} -c "import json; print(json.load(open('${REPO_ROOT}/params.json')).get('seed',42))" 2>/dev/null || echo 42)
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-GROUP_ID="${TIMESTAMP}_${SCALE}_s${SEED}"
-GROUP_DIR="${REPO_ROOT}/runs_treatment/${GROUP_ID}"
+
+# ============================================================
+# BASE MODEL
+# ============================================================
+if [ "${MODE}" = "base" ]; then
+  # Select config file
+  if [ "${SCALE}" = "S1e5" ]; then
+    CONFIG="${REPO_ROOT}/params.json"
+  else
+    CONFIG="${REPO_ROOT}/params_${SCALE}.json"
+  fi
+
+  # Auto-generate rescaled params if missing
+  if [ ! -f "${CONFIG}" ]; then
+    echo "[INFO] ${CONFIG} not found — generating via rescale_params.py..."
+    S_NUM="${SCALE#S}"   # e.g. S1e4 → 1e4
+    ${PYTHON} "${REPO_ROOT}/scripts/rescale_params.py" \
+      "${REPO_ROOT}/params.json" "${S_NUM}" "${CONFIG}"
+  fi
+
+  OUTPUT_DIR="${REPO_ROOT}/output/base_${SCALE}"
+  mkdir -p "${OUTPUT_DIR}"
+
+  echo "[2/2] Running base model  (scale=${SCALE}  threads=${THREADS})"
+  echo "  Config: ${CONFIG}"
+
+  START=$(date +%s)
+  cd "${REPO_ROOT}"
+  "${BINARY}" --config "${CONFIG}" --output "${OUTPUT_DIR}"
+  END=$(date +%s)
+  echo "  Done in $(( END - START ))s  → ${OUTPUT_DIR}/populations.csv"
+
+  # Archive
+  GROUP_DIR="${REPO_ROOT}/runs/${TIMESTAMP}_${SCALE}_s${SEED}"
+  mkdir -p "${GROUP_DIR}"
+  ${PYTHON} "${REPO_ROOT}/scripts/save_run.py" \
+    --params   "${CONFIG}" \
+    --abm      "${OUTPUT_DIR}/populations.csv" \
+    --refs     "${REPO_ROOT}/data-export" \
+    --runs-dir "${GROUP_DIR}" \
+    --duration "$(( END - START ))" \
+    --note     "${NOTE}"
+
+  echo ""
+  echo "================================================================"
+  echo "  Base run complete.  Scale: ${SCALE}  Seed: ${SEED}"
+  echo "  Output: ${OUTPUT_DIR}/populations.csv"
+  echo "  Archive: ${GROUP_DIR}/"
+  echo "================================================================"
+  exit 0
+fi
+
+# ============================================================
+# TREATMENT MODE  (requires treatment branch)
+# ============================================================
+IFS=',' read -ra PROTO_LIST <<< "${PROTOCOLS}"
+N_PROTO=${#PROTO_LIST[@]}
+echo "[2/2] Running ${N_PROTO} treatment protocols  (scale=${SCALE}  threads=${THREADS}  parallel=${PARALLEL})"
+
+GROUP_DIR="${REPO_ROOT}/runs_treatment/${TIMESTAMP}_${SCALE}_s${SEED}"
 mkdir -p "${GROUP_DIR}"
+mkdir -p "${REPO_ROOT}/logs"
 echo "  Group folder: ${GROUP_DIR}"
-echo ""
 
 PIDS=()
 for PROTO in "${PROTO_LIST[@]}"; do
@@ -94,35 +170,33 @@ for PROTO in "${PROTO_LIST[@]}"; do
   else
     CONFIG="${REPO_ROOT}/params_treat_${PROTO}_${SCALE}.json"
   fi
-
-  if [ ! -f "${CONFIG}" ]; then
-    echo "[ERROR] Config not found: ${CONFIG}" >&2; exit 1
-  fi
+  [ ! -f "${CONFIG}" ] && { echo "[ERROR] Config not found: ${CONFIG}" >&2; exit 1; }
 
   OUTPUT_DIR="${REPO_ROOT}/output/${PROTO}"
   mkdir -p "${OUTPUT_DIR}"
+  echo "  → ${PROTO}  config: $(basename "${CONFIG}")"
 
-  echo "  → ${PROTO}  (config: $(basename "${CONFIG}"))"
+  _run_proto() {
+    local proto="$1" cfg="$2" outdir="$3"
+    local start end
+    start=$(date +%s)
+    "${BINARY}" --config "${cfg}" --output "${outdir}" \
+      > "${REPO_ROOT}/logs/${proto}.log" 2>&1
+    end=$(date +%s)
+    echo "  [${proto}] done in $(( end - start ))s"
+    "${PYTHON}" "${REPO_ROOT}/scripts/save_run.py" \
+      --params    "${cfg}" \
+      --abm       "${outdir}/populations.csv" \
+      --refs      "${REPO_ROOT}/data-export" \
+      --group-dir "${GROUP_DIR}" \
+      --duration  "$(( end - start ))" \
+      --note      "${NOTE}"
+  }
 
   if [ "${PARALLEL}" = true ]; then
-    # Background: all protocols run at the same time
-    (
-      START=$(date +%s)
-      "${BINARY}" --config "${CONFIG}" --output "${OUTPUT_DIR}" \
-        > "${REPO_ROOT}/logs/${PROTO}.log" 2>&1
-      END=$(date +%s)
-      echo "  [${PROTO}] done in $(( END - START ))s"
-      "${PYTHON}" "${REPO_ROOT}/scripts/save_run.py" \
-        --params    "${CONFIG}" \
-        --abm       "${OUTPUT_DIR}/populations.csv" \
-        --refs      "${REPO_ROOT}/data-export" \
-        --group-dir "${GROUP_DIR}" \
-        --duration  "$(( END - START ))" \
-        --note      "${NOTE}"
-    ) &
+    ( _run_proto "${PROTO}" "${CONFIG}" "${OUTPUT_DIR}" ) &
     PIDS+=($!)
   else
-    # Sequential
     START=$(date +%s)
     "${BINARY}" --config "${CONFIG}" --output "${OUTPUT_DIR}"
     END=$(date +%s)
@@ -137,17 +211,12 @@ for PROTO in "${PROTO_LIST[@]}"; do
   fi
 done
 
-# Wait for background jobs if running in parallel
 if [ "${PARALLEL}" = true ] && [ ${#PIDS[@]} -gt 0 ]; then
-  echo ""
   echo "  Waiting for ${#PIDS[@]} background jobs..."
-  mkdir -p "${REPO_ROOT}/logs"
-  for pid in "${PIDS[@]}"; do
-    wait "${pid}" || echo "[WARN] job ${pid} exited non-zero"
-  done
+  for pid in "${PIDS[@]}"; do wait "${pid}" || echo "[WARN] job ${pid} exited non-zero"; done
 fi
 
 echo ""
-echo "============================================================"
+echo "================================================================"
 echo "  All protocols complete.  Results: ${GROUP_DIR}"
-echo "============================================================"
+echo "================================================================"
