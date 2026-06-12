@@ -144,8 +144,7 @@ c['output_dir'] = '${OUTPUT_DIR}'
 json.dump(c, open('${_TMP}', 'w'), indent=2)
 "
   START=$(date +%s)
-  cd "${REPO_ROOT}"
-  "${BINARY}" --config "${_TMP}"
+  BDM_PARAMS="${_TMP}" "${BINARY}"
   END=$(date +%s)
   rm -f "${_TMP}"
   DURATION=$(( END - START ))

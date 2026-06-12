@@ -748,8 +748,11 @@ inline int Simulate(int argc, const char** argv) {
 
   // Phase 1: read JSON into a temporary SimParam to extract bounds/dt for the
   // setup lambda. The actual params are loaded into sp after Simulation is up.
+  // BDM_PARAMS env var overrides the default "params.json" path.
+  const char* _params_env = std::getenv("BDM_PARAMS");
+  const std::string _params_path = _params_env ? _params_env : "params.json";
   SimParam tmp;
-  tmp.LoadParams("params.json");
+  tmp.LoadParams(_params_path);
 
   auto setp = [&tmp](Param* param) {
     param->bound_space          = Param::BoundSpaceMode::kClosed;

@@ -32,8 +32,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
+import csv
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -77,20 +76,25 @@ def load_params(path: Path) -> dict:
 
 
 def final_counts(populations_csv: Path) -> dict:
-    df = pd.read_csv(populations_csv)
-    last = df.iloc[-1]
-    return {col: int(last[col]) for col in ["C", "P", "E", "N", "H", "R"]
-            if col in df.columns}
+    with open(populations_csv, newline="") as f:
+        rows = list(csv.DictReader(f))
+    if not rows:
+        return {}
+    last = rows[-1]
+    return {col: int(float(last[col])) for col in ["C", "P", "E", "N", "H", "R"]
+            if col in last}
 
 
 def summarise_metrics(metrics_csv: Path) -> dict:
     """Flatten fit_metrics_summary.csv into {Pop_R2: val, Pop_MAPE: val, ...}."""
-    df = pd.read_csv(metrics_csv)
     flat = {}
-    for _, row in df.iterrows():
-        pop = row["population"]
-        flat[f"{pop}_R2"]   = round(float(row["R2"]),   4) if pd.notna(row["R2"])    else None
-        flat[f"{pop}_MAPE"] = round(float(row["MAPE_%"]), 2) if pd.notna(row["MAPE_%"]) else None
+    with open(metrics_csv, newline="") as f:
+        for row in csv.DictReader(f):
+            pop = row["population"]
+            r2  = row.get("R2", "")
+            mpe = row.get("MAPE_%", "")
+            flat[f"{pop}_R2"]   = round(float(r2),  4) if r2  not in ("", "nan", "None") else None
+            flat[f"{pop}_MAPE"] = round(float(mpe), 2) if mpe not in ("", "nan", "None") else None
     return flat
 
 
@@ -245,22 +249,23 @@ def main():
     # Fit metrics
     row.update(metrics_flat)
 
-    new_row_df = pd.DataFrame([row])
-
     if index_path.exists():
-        index_df = pd.read_csv(index_path, dtype=str)
-        # Align columns: add any new columns as NaN
-        for col in new_row_df.columns:
-            if col not in index_df.columns:
-                index_df[col] = np.nan
-        for col in index_df.columns:
-            if col not in new_row_df.columns:
-                new_row_df[col] = np.nan
-        index_df = pd.concat([index_df, new_row_df], ignore_index=True)
+        with open(index_path, newline="") as f:
+            existing_rows = list(csv.DictReader(f))
+        all_cols = list(dict.fromkeys(
+            list(existing_rows[0].keys() if existing_rows else []) +
+            list(row.keys())
+        ))
+        existing_rows.append(row)
     else:
-        index_df = new_row_df
+        existing_rows = [row]
+        all_cols = list(row.keys())
 
-    index_df.to_csv(index_path, index=False)
+    with open(index_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=all_cols, extrasaction="ignore")
+        writer.writeheader()
+        for r in existing_rows:
+            writer.writerow({k: r.get(k, "") for k in all_cols})
 
     # -----------------------------------------------------------------------
     # 8. Summary

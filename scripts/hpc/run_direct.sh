@@ -125,17 +125,17 @@ if [ "${MODE}" = "base" ]; then
   echo "[2/2] Running base model  (scale=${SCALE}  threads=${THREADS})"
   echo "  Config: ${CONFIG}"
 
-  # BioDynaMo reads output_dir from the config JSON; --output is not supported.
+  # The binary reads "params.json" from CWD via LoadParams(); BDM_PARAMS overrides
+  # that path, and output_dir is patched to an absolute path so it is CWD-independent.
   TMP_CFG=$(mktemp /tmp/bdm_cfg_XXXXXX.json)
   ${PYTHON} -c "
-import json, sys
+import json
 cfg = json.load(open('${CONFIG}'))
 cfg['output_dir'] = '${OUTPUT_DIR}'
 json.dump(cfg, open('${TMP_CFG}', 'w'), indent=2)
 "
   START=$(date +%s)
-  cd "${REPO_ROOT}"
-  "${BINARY}" --config "${TMP_CFG}"
+  BDM_PARAMS="${TMP_CFG}" "${BINARY}"
   END=$(date +%s)
   rm -f "${TMP_CFG}"
   echo "  Done in $(( END - START ))s  → ${OUTPUT_DIR}/populations.csv"
@@ -191,12 +191,12 @@ for PROTO in "${PROTO_LIST[@]}"; do
     tmp_cfg=$(mktemp /tmp/bdm_cfg_XXXXXX.json)
     ${PYTHON} -c "
 import json
-c = json.load(open('${cfg}'))
-c['output_dir'] = '${outdir}'
+c = json.load(open('$cfg'))
+c['output_dir'] = '$outdir'
 json.dump(c, open('$tmp_cfg', 'w'), indent=2)
 "
     start=$(date +%s)
-    "${BINARY}" --config "${tmp_cfg}" \
+    BDM_PARAMS="${tmp_cfg}" "${BINARY}" \
       > "${REPO_ROOT}/logs/${proto}.log" 2>&1
     end=$(date +%s)
     rm -f "${tmp_cfg}"
@@ -222,7 +222,7 @@ c['output_dir'] = '${OUTPUT_DIR}'
 json.dump(c, open('${_TMP}', 'w'), indent=2)
 "
     START=$(date +%s)
-    "${BINARY}" --config "${_TMP}"
+    BDM_PARAMS="${_TMP}" "${BINARY}"
     END=$(date +%s)
     rm -f "${_TMP}"
     echo "  [${PROTO}] done in $(( END - START ))s"
