@@ -27,7 +27,7 @@
 #SBATCH --error=logs/slurm-base-%j.err
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SIF="${BDM_SIF:-${REPO_ROOT}/Singularity.sif}"
+SIF="${BDM_SIF:-/ceph/hpc/home/eustavrosp/biodynamo}"
 SCALE="${SCALE:-S1e4}"
 NOTE="${NOTE:-SLURM base scale=${SCALE}}"
 

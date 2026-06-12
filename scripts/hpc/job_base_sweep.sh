@@ -32,7 +32,7 @@
 #SBATCH --error=logs/slurm-sweep-%A-%a.err
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SIF="${BDM_SIF:-${REPO_ROOT}/Singularity.sif}"
+SIF="${BDM_SIF:-/ceph/hpc/home/eustavrosp/biodynamo}"
 SCALE="${SCALE:-S1e4}"
 
 # One seed per array task — extend the list for more tasks
