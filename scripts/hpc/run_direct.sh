@@ -50,16 +50,18 @@ THREADS=""
 PARALLEL=false
 SKIP_BUILD=false
 NOTE="HPC direct run"
+SEED_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --scale)      SCALE="$2";     shift 2 ;;
-    --treatment)  MODE="treatment"; shift ;;
-    --protocols)  PROTOCOLS="$2"; shift 2 ;;
-    --threads)    THREADS="$2";   shift 2 ;;
-    --parallel)   PARALLEL=true;  shift ;;
-    --skip-build) SKIP_BUILD=true; shift ;;
-    --note)       NOTE="$2";      shift 2 ;;
+    --scale)      SCALE="$2";          shift 2 ;;
+    --treatment)  MODE="treatment";    shift ;;
+    --protocols)  PROTOCOLS="$2";      shift 2 ;;
+    --threads)    THREADS="$2";        shift 2 ;;
+    --parallel)   PARALLEL=true;       shift ;;
+    --skip-build) SKIP_BUILD=true;     shift ;;
+    --note)       NOTE="$2";           shift 2 ;;
+    --seed)       SEED_OVERRIDE="$2";  shift 2 ;;
     *) echo "[ERROR] Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -98,6 +100,7 @@ fi
 export OMP_NUM_THREADS="${THREADS}"
 
 SEED=$(${PYTHON} -c "import json; print(json.load(open('${REPO_ROOT}/params.json')).get('seed',42))" 2>/dev/null || echo 42)
+[ -n "${SEED_OVERRIDE}" ] && SEED="${SEED_OVERRIDE}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 # ============================================================
@@ -132,6 +135,8 @@ if [ "${MODE}" = "base" ]; then
 import json
 cfg = json.load(open('${CONFIG}'))
 cfg['output_dir'] = '${OUTPUT_DIR}'
+if '${SEED_OVERRIDE}':
+    cfg['seed'] = int('${SEED_OVERRIDE}')
 json.dump(cfg, open('${TMP_CFG}', 'w'), indent=2)
 "
   START=$(date +%s)
