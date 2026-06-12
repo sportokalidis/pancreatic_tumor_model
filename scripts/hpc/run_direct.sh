@@ -125,10 +125,19 @@ if [ "${MODE}" = "base" ]; then
   echo "[2/2] Running base model  (scale=${SCALE}  threads=${THREADS})"
   echo "  Config: ${CONFIG}"
 
+  # BioDynaMo reads output_dir from the config JSON; --output is not supported.
+  TMP_CFG=$(mktemp /tmp/bdm_cfg_XXXXXX.json)
+  ${PYTHON} -c "
+import json, sys
+cfg = json.load(open('${CONFIG}'))
+cfg['output_dir'] = '${OUTPUT_DIR}'
+json.dump(cfg, open('${TMP_CFG}', 'w'), indent=2)
+"
   START=$(date +%s)
   cd "${REPO_ROOT}"
-  "${BINARY}" --config "${CONFIG}" --output "${OUTPUT_DIR}"
+  "${BINARY}" --config "${TMP_CFG}"
   END=$(date +%s)
+  rm -f "${TMP_CFG}"
   echo "  Done in $(( END - START ))s  → ${OUTPUT_DIR}/populations.csv"
 
   # Archive
@@ -178,11 +187,19 @@ for PROTO in "${PROTO_LIST[@]}"; do
 
   _run_proto() {
     local proto="$1" cfg="$2" outdir="$3"
-    local start end
+    local start end tmp_cfg
+    tmp_cfg=$(mktemp /tmp/bdm_cfg_XXXXXX.json)
+    ${PYTHON} -c "
+import json
+c = json.load(open('${cfg}'))
+c['output_dir'] = '${outdir}'
+json.dump(c, open('$tmp_cfg', 'w'), indent=2)
+"
     start=$(date +%s)
-    "${BINARY}" --config "${cfg}" --output "${outdir}" \
+    "${BINARY}" --config "${tmp_cfg}" \
       > "${REPO_ROOT}/logs/${proto}.log" 2>&1
     end=$(date +%s)
+    rm -f "${tmp_cfg}"
     echo "  [${proto}] done in $(( end - start ))s"
     "${PYTHON}" "${REPO_ROOT}/scripts/save_run.py" \
       --params    "${cfg}" \
@@ -197,9 +214,17 @@ for PROTO in "${PROTO_LIST[@]}"; do
     ( _run_proto "${PROTO}" "${CONFIG}" "${OUTPUT_DIR}" ) &
     PIDS+=($!)
   else
+    _TMP=$(mktemp /tmp/bdm_cfg_XXXXXX.json)
+    ${PYTHON} -c "
+import json
+c = json.load(open('${CONFIG}'))
+c['output_dir'] = '${OUTPUT_DIR}'
+json.dump(c, open('${_TMP}', 'w'), indent=2)
+"
     START=$(date +%s)
-    "${BINARY}" --config "${CONFIG}" --output "${OUTPUT_DIR}"
+    "${BINARY}" --config "${_TMP}"
     END=$(date +%s)
+    rm -f "${_TMP}"
     echo "  [${PROTO}] done in $(( END - START ))s"
     "${PYTHON}" "${REPO_ROOT}/scripts/save_run.py" \
       --params    "${CONFIG}" \

@@ -128,19 +128,26 @@ for PROTO in "${PROTO_LIST[@]}"; do
     exit 1
   fi
 
-  # BioDynaMo treats --output as a directory; the CSV lands at <dir>/populations.csv
-  OUTPUT_DIR="${REPO_ROOT}/output/populations_${PROTO_KEY}.csv"
+  OUTPUT_DIR="${REPO_ROOT}/output/${PROTO_KEY}"
   OUTPUT_CSV="${OUTPUT_DIR}/populations.csv"
 
   echo ""
   echo "[$(( IDX + 1 ))/$((N_PROTO + 1))] Protocol: ${PROTO}"
   echo "  Config: ${CONFIG}"
 
-  mkdir -p "${REPO_ROOT}/output"
+  mkdir -p "${OUTPUT_DIR}"
+  _TMP=$(mktemp /tmp/bdm_cfg_XXXXXX.json)
+  "${PYTHON}" -c "
+import json
+c = json.load(open('${CONFIG}'))
+c['output_dir'] = '${OUTPUT_DIR}'
+json.dump(c, open('${_TMP}', 'w'), indent=2)
+"
   START=$(date +%s)
   cd "${REPO_ROOT}"
-  "${BINARY}" --config "${CONFIG}" --output "${OUTPUT_DIR}"
+  "${BINARY}" --config "${_TMP}"
   END=$(date +%s)
+  rm -f "${_TMP}"
   DURATION=$(( END - START ))
   echo "  Simulation done in ${DURATION}s → ${OUTPUT_CSV}"
 
