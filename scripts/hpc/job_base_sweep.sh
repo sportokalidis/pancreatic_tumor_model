@@ -30,6 +30,12 @@
 #SBATCH --time=04:00:00
 #SBATCH --output=logs/slurm-sweep-%A-%a.out
 #SBATCH --error=logs/slurm-sweep-%A-%a.err
+#SBATCH --export=ALL
+
+for _m in /etc/profile.d/modules.sh /usr/share/Modules/init/bash \
+          /opt/modules/init/bash /usr/local/Modules/init/bash; do
+  [ -f "${_m}" ] && { source "${_m}" 2>/dev/null; break; }
+done
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SIF="${BDM_SIF:-/ceph/hpc/home/eustavrosp/biodynamo}"
