@@ -22,7 +22,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${REPO_ROOT}/build"
 BINARY="${BUILD_DIR}/pancreatic_tumor_new"
 OUTPUT_CSV="${REPO_ROOT}/output/populations.csv"
-PYTHON="/home/stavport/.pyenv/versions/3.9.1/bin/python3"
+
+# Portable environment: resolves BDM_BUILD and PYTHON on any machine.
+source "${REPO_ROOT}/scripts/hpc/env.sh" || exit 2
 
 NOTE=""
 SKIP_BUILD=false

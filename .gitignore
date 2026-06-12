@@ -5,12 +5,16 @@ docs/
 
 # Generated run archives and experiment outputs
 runs/
+runs_treatment/
 params.json.bak
 data-export/*.png
 data-export/ode_reference.csv
 data-export/ode_vs_abm.png
 
 **/.DS_Store
+.venv/
+scripts/__pycache__/
+__pycache__/
 
 #----------------- intellij -----------------
 .idea

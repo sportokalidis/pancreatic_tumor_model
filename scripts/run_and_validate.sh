@@ -16,14 +16,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Source BioDynaMo environment (provides Python with numpy/pandas and the BDM libs)
-BDM_ENV="${HOME}/Documents/dev/biodynamo/build/bin/thisbdm.sh"
-if [ -f "${BDM_ENV}" ]; then
-  source "${BDM_ENV}" 2>/dev/null || true
-else
-  echo "[WARN] BioDynaMo environment not found at ${BDM_ENV}" >&2
-  echo "       Ensure numpy/pandas are available in the current Python environment." >&2
-fi
+# Portable environment: resolves BDM_BUILD and PYTHON on any machine.
+source "${REPO_ROOT}/scripts/hpc/env.sh" || exit 2
 BUILD_DIR="${REPO_ROOT}/build"
 OUTPUT_CSV="${REPO_ROOT}/output/populations.csv"
 VALIDATE_PY="${REPO_ROOT}/scripts/validate.py"
@@ -92,10 +86,10 @@ fi
 
 # Always compute error metrics first (updates fit_metrics_summary.csv)
 cd "${REPO_ROOT}"
-python3 scripts/calc-error.py 2>/dev/null || true
+"${PYTHON}" scripts/calc-error.py 2>/dev/null || true
 
 # Then run threshold validation
-python3 "${VALIDATE_PY}" \
+"${PYTHON}" "${VALIDATE_PY}" \
   --populations-csv "${OUTPUT_CSV}" \
   --data-dir "${REPO_ROOT}/data-export" \
   ${STRICT_FLAG}
