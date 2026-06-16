@@ -98,6 +98,9 @@ if [ -z "${THREADS}" ]; then
   fi
 fi
 export OMP_NUM_THREADS="${THREADS}"
+# BioDynaMo requires OMP_PROC_BIND=true for NUMA-aware thread placement.
+# Without it, numa_alloc_onnode fails on multi-NUMA HPC nodes.
+export OMP_PROC_BIND=true
 
 SEED=$(${PYTHON} -c "import json; print(json.load(open('${REPO_ROOT}/params.json')).get('seed',42))" 2>/dev/null || echo 42)
 [ -n "${SEED_OVERRIDE}" ] && SEED="${SEED_OVERRIDE}"
@@ -122,14 +125,15 @@ if [ "${MODE}" = "base" ]; then
       "${REPO_ROOT}/params.json" "${S_NUM}" "${CONFIG}"
   fi
 
-  OUTPUT_DIR="${REPO_ROOT}/output/base_${SCALE}"
+  # Write directly into runs/ with consistent name format TIMESTAMP_SCALE_sSEED
+  RUN_ID="${TIMESTAMP}_${SCALE}_s${SEED}"
+  OUTPUT_DIR="${REPO_ROOT}/runs/${RUN_ID}"
   mkdir -p "${OUTPUT_DIR}"
 
-  echo "[2/2] Running base model  (scale=${SCALE}  threads=${THREADS})"
+  echo "[2/2] Running base model  (scale=${SCALE}  seed=${SEED}  threads=${THREADS})"
   echo "  Config: ${CONFIG}"
+  echo "  Output: ${OUTPUT_DIR}"
 
-  # The binary reads "params.json" from CWD via LoadParams(); BDM_PARAMS overrides
-  # that path, and output_dir is patched to an absolute path so it is CWD-independent.
   TMP_CFG=$(mktemp /tmp/bdm_cfg_XXXXXX.json)
   ${PYTHON} -c "
 import json
@@ -145,14 +149,12 @@ json.dump(cfg, open('${TMP_CFG}', 'w'), indent=2)
   rm -f "${TMP_CFG}"
   echo "  Done in $(( END - START ))s  → ${OUTPUT_DIR}/populations.csv"
 
-  # Archive
-  GROUP_DIR="${REPO_ROOT}/runs/${TIMESTAMP}_${SCALE}_s${SEED}"
-  mkdir -p "${GROUP_DIR}"
+  # Post-process in the same directory (--run-dir skips timestamp renaming)
   ${PYTHON} "${REPO_ROOT}/scripts/save_run.py" \
     --params   "${CONFIG}" \
     --abm      "${OUTPUT_DIR}/populations.csv" \
     --refs     "${REPO_ROOT}/data-export" \
-    --runs-dir "${GROUP_DIR}" \
+    --run-dir  "${OUTPUT_DIR}" \
     --duration "$(( END - START ))" \
     --note     "${NOTE}"
 
@@ -160,7 +162,7 @@ json.dump(cfg, open('${TMP_CFG}', 'w'), indent=2)
   echo "================================================================"
   echo "  Base run complete.  Scale: ${SCALE}  Seed: ${SEED}"
   echo "  Output: ${OUTPUT_DIR}/populations.csv"
-  echo "  Archive: ${GROUP_DIR}/"
+  echo "  Archive: ${REPO_ROOT}/runs/"
   echo "================================================================"
   exit 0
 fi

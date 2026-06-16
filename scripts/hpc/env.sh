@@ -26,6 +26,8 @@ fi
 if [ -z "${BDM_BUILD:-}" ]; then
   # Priority: Apptainer standard prefix, then user builds, then modules
   for candidate in \
+      "/biodynamo/build" \
+      "/biodynamo" \
       "/opt/biodynamo" \
       "/opt/biodynamo/build" \
       "/usr/local/biodynamo" \
@@ -58,14 +60,12 @@ if [ -z "${BDM_BUILD:-}" ]; then
 fi
 export BDM_BUILD
 
-# Source thisbdm.sh only if it exists and we are NOT inside a container
-# (the container already provides the correct LD_LIBRARY_PATH etc.)
+# Always source thisbdm.sh when it exists — needed even inside a container
+# when launched with --cleanenv, which strips LD_LIBRARY_PATH and ROOTSYS.
 _THISBDM="${BDM_BUILD}/bin/thisbdm.sh"
-if [ "${_IN_CONTAINER}" = false ] && [ -f "${_THISBDM}" ]; then
+if [ -f "${_THISBDM}" ]; then
   { set +eu; source "${_THISBDM}" >/dev/null 2>&1; set -eu; } || true
   echo "[env.sh] BioDynaMo (sourced thisbdm.sh): ${BDM_BUILD}"
-elif [ "${_IN_CONTAINER}" = true ]; then
-  echo "[env.sh] BioDynaMo (Apptainer container): ${BDM_BUILD}"
 else
   echo "[env.sh] BioDynaMo (no thisbdm.sh, assuming pre-loaded): ${BDM_BUILD}"
 fi

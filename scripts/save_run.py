@@ -26,6 +26,7 @@ Usage:
 import argparse
 import hashlib
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -124,6 +125,8 @@ def main():
                         help="Directory with *_scaled_global.csv paper references")
     parser.add_argument("--runs-dir", default="runs",
                         help="Root directory for archived runs (default: runs/)")
+    parser.add_argument("--run-dir",  default=None,
+                        help="Use this exact directory (skips timestamp naming under --runs-dir)")
     args = parser.parse_args()
 
     # Resolve paths relative to REPO_ROOT
@@ -144,9 +147,17 @@ def main():
     params  = load_params(params_path)
     seed    = params.get("seed", 0)
     ts      = datetime.now()
-    run_id  = ts.strftime("%Y%m%d_%H%M%S") + f"_s{seed}"
-    run_dir = runs_dir / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.run_dir:
+        run_dir = Path(args.run_dir).resolve()
+        run_id  = run_dir.name
+        run_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        scale_s = params.get("scale_S", 1e5)
+        exp     = int(round(math.log10(float(scale_s))))
+        run_id  = ts.strftime("%Y%m%d_%H%M%S") + f"_S1e{exp}_s{seed}"
+        run_dir = runs_dir / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
     print(f"\n[save_run] Archiving → {run_dir}")
 
     # -----------------------------------------------------------------------
