@@ -50,3 +50,13 @@ if [ -f "${BINARY}" ]; then
 else
   echo "[build] ERROR: binary not found after build" >&2; exit 1
 fi
+
+# Compile fake_numa.so — LD_PRELOAD shim required on multi-NUMA HPC nodes
+# (prevents BioDynaMo from calling numa_alloc_onnode on domain 1 inside container)
+FAKE_NUMA_C="${REPO_ROOT}/scripts/hpc/fake_numa.c"
+FAKE_NUMA_SO="${REPO_ROOT}/scripts/hpc/fake_numa.so"
+if [ -f "${FAKE_NUMA_C}" ]; then
+  echo "[build] Compiling fake_numa.so..."
+  gcc -shared -fPIC -nostartfiles -o "${FAKE_NUMA_SO}" "${FAKE_NUMA_C}"
+  echo "[build] fake_numa.so: ${FAKE_NUMA_SO}"
+fi
