@@ -37,8 +37,12 @@ for _m in /etc/profile.d/modules.sh /usr/share/Modules/init/bash \
   [ -f "${_m}" ] && { source "${_m}" 2>/dev/null; break; }
 done
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SIF="${BDM_SIF:-/ceph/hpc/home/eustavrosp/biodynamo}"
+# SLURM copies the script to a spool dir, so BASH_SOURCE is unreliable.
+# REPO_ROOT is injected by submit_base_scales.sh; fall back to SLURM_SUBMIT_DIR.
+REPO_ROOT="${REPO_ROOT:-${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)}}"
+# Resolve any symlinks so the path matches /cephhome/... inside the container
+REPO_ROOT="$(cd "${REPO_ROOT}" && pwd -P)"
+SIF="${BDM_SIF:-/ceph/hpc/home/eustavrosp/biodynamo/Singularity.sif}"
 SCALE="${SCALE:-S1e4}"
 
 # One seed per array task — extend the list for more tasks
@@ -68,9 +72,13 @@ fi
 mkdir -p "${REPO_ROOT}/logs"
 echo "[job_base_sweep] array=${SLURM_ARRAY_JOB_ID:-local}[${SLURM_ARRAY_TASK_ID:-0}]  scale=${SCALE}  seed=${SEED}  sing=${SING}"
 
-"${SING}" exec --cleanenv "${SIF}" \
-  bash "${REPO_ROOT}/scripts/hpc/run_direct.sh" \
+"${SING}" exec --cleanenv --bind /cephhome \
+  --env "LD_PRELOAD=${REPO_ROOT}/scripts/hpc/fake_numa.so" \
+  --env "PYTHONUSERBASE=/cephhome/eustavrosp/.local" \
+  "${SIF}" \
+  /bin/bash "${REPO_ROOT}/scripts/hpc/run_direct.sh" \
   --scale      "${SCALE}" \
   --seed       "${SEED}" \
+  --threads    "${SLURM_CPUS_PER_TASK:-16}" \
   --skip-build \
   --note       "${NOTE}"

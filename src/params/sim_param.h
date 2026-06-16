@@ -46,7 +46,7 @@ struct SimParam : public ParamGroup {
   // --------------------------------------------------------------------------
   // Interaction mode
   // --------------------------------------------------------------------------
-  bool   use_local_counts = false;
+  bool   use_local_counts = true;
   real_t local_radius_um  = 36.0;   // 3 cell diameters — paracrine signaling range
   real_t immune_step_um   = 10.0;   // Gaussian σ per coordinate per step for immune random walk
 
@@ -61,23 +61,23 @@ struct SimParam : public ParamGroup {
   // Paper: C0=4.886e7, P0=2.7362e5, E0=4.2684e7, N0=2.3531e7,
   //        H0=1.0343e8, R0=7.7570e6
   // --------------------------------------------------------------------------
-  size_t C0 = 489;
-  size_t P0 = 3;
-  size_t E0 = 427;
-  size_t N0 = 235;
-  size_t H0 = 1034;
-  size_t R0 = 78;
+  size_t C0 = 4890;
+  size_t P0 = 30;
+  size_t E0 = 4270;
+  size_t N0 = 2350;
+  size_t H0 = 10340;
+  size_t R0 = 780;
 
   // --------------------------------------------------------------------------
   // Carrying capacities (used in logistic crowding for C and P).
   // K_E, K_N, K_H are unused in ODE terms (paper has no cap for immune cells)
   // but kept as optional safety caps in SourceBehavior.
   // --------------------------------------------------------------------------
-  real_t K_C = 8767.0;    // 1/(a_c·S)
-  real_t K_P = 4384.0;    // 1/(a_p·S)
-  real_t K_E = 3000.0;
-  real_t K_N = 3000.0;
-  real_t K_H = 4000.0;
+  real_t K_C = 87670.0;    // 1/(a_c·S)
+  real_t K_P = 43840.0;    // 1/(a_p·S)
+  real_t K_E = 30000.0;
+  real_t K_N = 30000.0;
+  real_t K_H = 40000.0;
   real_t K_R = 800000.0;
 
   // --------------------------------------------------------------------------
