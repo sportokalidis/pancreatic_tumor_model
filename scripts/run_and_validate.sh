@@ -66,9 +66,9 @@ if [ "$SKIP_RUN" = false ]; then
     exit 2
   fi
 
-  # Run from REPO_ROOT so params.json is found at ./params.json
+  # Param files live in configs/; point the binary there via BDM_PARAMS.
   cd "${REPO_ROOT}"
-  "${BIN}"
+  BDM_PARAMS="${REPO_ROOT}/configs/params.json" "${BIN}"
   echo "[RUN] Done. Output: ${OUTPUT_CSV}"
 else
   echo "[STEP 2/3] Simulation run skipped."

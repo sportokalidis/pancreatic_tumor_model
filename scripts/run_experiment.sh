@@ -74,7 +74,8 @@ if [ "${SKIP_RUN}" = false ]; then
   echo "[2/3] Running simulation..."
   mkdir -p "${REPO_ROOT}/output"
   cd "${REPO_ROOT}"
-  "${BINARY}"
+  # Binary reads the config from BDM_PARAMS (param files now live in configs/).
+  BDM_PARAMS="${REPO_ROOT}/configs/params.json" "${BINARY}"
   echo "      Simulation complete. Output: ${OUTPUT_CSV}"
 else
   echo "[2/3] Simulation run skipped."
@@ -96,6 +97,6 @@ cd "${REPO_ROOT}"
   --note     "${NOTE}" \
   --duration "${DURATION}" \
   --abm      "output/populations.csv" \
-  --params   "params.json" \
+  --params   "configs/params.json" \
   --refs     "data-export" \
   --runs-dir "runs"

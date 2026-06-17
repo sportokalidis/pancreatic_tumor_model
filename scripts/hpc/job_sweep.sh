@@ -5,7 +5,7 @@
 # Runs N_SEEDS × 4 combinations.  Array task ID encodes:
 #   task_id = seed_index * 4 + protocol_index
 #
-# Results land in: runs_treatment/<TIMESTAMP>_<SCALE>_sweep/
+# Results land in: runs/treatment/<TIMESTAMP>_<SCALE>_sweep/
 #
 # Submit:
 #   N_SEEDS=5 sbatch scripts/hpc/job_sweep.sh
@@ -68,9 +68,9 @@ PROTO="${PROTOCOLS[$PROTO_IDX]}"
 
 # Build a per-seed config by injecting the seed into the base config
 if [ "${SCALE}" = "S1e5" ]; then
-  BASE_CONFIG="${REPO_ROOT}/params_treat_${PROTO}.json"
+  BASE_CONFIG="${REPO_ROOT}/configs/params_treat_${PROTO}.json"
 else
-  BASE_CONFIG="${REPO_ROOT}/params_treat_${PROTO}_${SCALE}.json"
+  BASE_CONFIG="${REPO_ROOT}/configs/params_treat_${PROTO}_${SCALE}.json"
 fi
 
 if [ ! -f "${BASE_CONFIG}" ]; then
@@ -110,7 +110,7 @@ END=$(date +%s)
 echo "  Done in $(( END - START ))s"
 
 # Archive into a sweep group folder (keyed by parent job ID)
-SWEEP_GROUP="${REPO_ROOT}/runs_treatment/sweep_${SLURM_ARRAY_JOB_ID:-local}_${SCALE}"
+SWEEP_GROUP="${REPO_ROOT}/runs/treatment/sweep_${SLURM_ARRAY_JOB_ID:-local}_${SCALE}"
 mkdir -p "${SWEEP_GROUP}"
 
 "${PYTHON}" "${REPO_ROOT}/scripts/save_run.py" \
@@ -118,6 +118,7 @@ mkdir -p "${SWEEP_GROUP}"
   --abm       "${OUTPUT_DIR}/populations.csv" \
   --refs      "${REPO_ROOT}/data-export" \
   --group-dir "${SWEEP_GROUP}" \
+  --name      "${PROTO}_s${SEED}" \
   --duration  "$(( END - START ))" \
   --note      "sweep seed=${SEED} proto=${PROTO}"
 

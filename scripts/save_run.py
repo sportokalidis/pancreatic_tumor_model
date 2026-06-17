@@ -119,14 +119,23 @@ def main():
                         help="Wall-clock duration of the simulation in seconds")
     parser.add_argument("--abm",      default="output/populations.csv",
                         help="Path to ABM populations CSV (default: output/populations.csv)")
-    parser.add_argument("--params",   default="params.json",
-                        help="Path to params JSON (default: params.json)")
+    parser.add_argument("--params",   default="configs/params.json",
+                        help="Path to params JSON (default: configs/params.json)")
     parser.add_argument("--refs",     default="data-export",
                         help="Directory with *_scaled_global.csv paper references")
     parser.add_argument("--runs-dir", default="runs",
                         help="Root directory for archived runs (default: runs/)")
     parser.add_argument("--run-dir",  default=None,
                         help="Use this exact directory (skips timestamp naming under --runs-dir)")
+    parser.add_argument("--group-dir", default=None,
+                        help="Archive into <group-dir>/<name>/ — used to bundle the "
+                             "protocols of one treatment group under a shared folder")
+    parser.add_argument("--name",     default=None,
+                        help="Subfolder name within --group-dir (e.g. protocol name)")
+    parser.add_argument("--category", default=None,
+                        choices=["base", "treatment", "csc"],
+                        help="Experiment class for runs/<category>/ routing. "
+                             "If omitted, inferred from params flags.")
     args = parser.parse_args()
 
     # Resolve paths relative to REPO_ROOT
@@ -148,17 +157,33 @@ def main():
     seed    = params.get("seed", 0)
     ts      = datetime.now()
 
+    # Experiment category routes the archive into runs/<category>/.
+    #   csc_enable=true                  → csc
+    #   any treat_* flag true            → treatment
+    #   otherwise                        → base
+    category = args.category or (
+        "csc"       if params.get("csc_enable") else
+        "treatment" if (params.get("treat_gem") or params.get("treat_abr")
+                        or params.get("treat_acd47")) else
+        "base")
+
     if args.run_dir:
         run_dir = Path(args.run_dir).resolve()
         run_id  = run_dir.name
+        run_dir.mkdir(parents=True, exist_ok=True)
+    elif args.group_dir:
+        scale_s = params.get("scale_S", 1e5)
+        exp     = int(round(math.log10(float(scale_s))))
+        run_id  = args.name or (ts.strftime("%Y%m%d_%H%M%S") + f"_S1e{exp}_s{seed}")
+        run_dir = (REPO_ROOT / args.group_dir).resolve() / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
     else:
         scale_s = params.get("scale_S", 1e5)
         exp     = int(round(math.log10(float(scale_s))))
         run_id  = ts.strftime("%Y%m%d_%H%M%S") + f"_S1e{exp}_s{seed}"
-        run_dir = runs_dir / run_id
+        run_dir = runs_dir / category / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
-    print(f"\n[save_run] Archiving → {run_dir}")
+    print(f"\n[save_run] Archiving → {run_dir}  (category={category})")
 
     # -----------------------------------------------------------------------
     # 2. Copy core files
@@ -172,17 +197,30 @@ def main():
     shutil.copy2(abm_path, REFS_DIR / "populations.csv")
 
     # -----------------------------------------------------------------------
-    # 3. ODE reference
+    # 3. ODE reference (matching this run's category)
     # -----------------------------------------------------------------------
+    # Use the ODE mode that matches the run so the overlay is apples-to-apples:
+    #   base      → paper ground-truth ODE (Eqs 2.1-2.6), but --no-refs so the
+    #               digitized *_scaled_global.csv references are NOT overwritten
+    #               (regenerate those deliberately via `ode_reference.py --mode paper`)
+    #   treatment → Eqs 5.1-5.7 with this run's drug schedule
+    #   csc       → 7-variable CSC system
+    ode_mode = {"base": "paper", "treatment": "treatment", "csc": "csc"}[category]
     scale_s = params.get("scale_S", 1e5)
-    print("\n[1/3] Running ODE reference...")
-    ok = run_subprocess([
+    print(f"\n[1/3] Running ODE reference (mode={ode_mode})...")
+    ode_cmd = [
         PYTHON, str(ODE_SCRIPT),
+        "--mode",   ode_mode,
         "--params", str(run_dir / "params.json"),
         "--scale",  str(scale_s),
         "--abm",    str(run_dir / "populations.csv"),
         "--out",    str(run_dir),
-    ], "ODE")
+    ]
+    if ode_mode == "paper":
+        ode_cmd.append("--no-refs")
+    if ode_mode == "csc":
+        ode_cmd += ["--s0", str(params.get("S0", 10))]
+    ok = run_subprocess(ode_cmd, "ODE")
     if not ok:
         print("  [WARN] ODE reference failed — skipping")
 

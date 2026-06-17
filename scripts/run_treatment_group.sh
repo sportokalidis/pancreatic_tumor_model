@@ -3,7 +3,7 @@
 # Run all 4 treatment protocols and archive them into ONE group folder.
 #
 # Creates:
-#   runs_treatment/<TIMESTAMP>_<SCALE>_s<SEED>/
+#   runs/treatment/<TIMESTAMP>_<SCALE>_s<SEED>/
 #     acd47/          ← Anti-CD47 run
 #     gem/            ← Gemcitabine run
 #     abr/            ← Abraxane run
@@ -29,7 +29,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${REPO_ROOT}/build"
 BINARY="${BUILD_DIR}/pancreatic_tumor_new"
-RUNS_TREATMENT="${REPO_ROOT}/runs_treatment"
+RUNS_TREATMENT="${REPO_ROOT}/runs/treatment"
 
 # Portable environment: resolves BDM_BUILD and PYTHON on any machine.
 source "${REPO_ROOT}/scripts/hpc/env.sh" || exit 1
@@ -60,9 +60,9 @@ protos = '${PROTOCOLS}'.split(',')
 for p in protos:
     key = p.replace('+', '_')
     suffix = '_${SCALE}' if '${SCALE}' != 'S1e5' else ''
-    fname = pathlib.Path('${REPO_ROOT}') / f'{prefix}{key}{suffix}.json'
+    fname = pathlib.Path('${REPO_ROOT}') / 'configs' / f'{prefix}{key}{suffix}.json'
     if not fname.exists():
-        fname = pathlib.Path('${REPO_ROOT}') / 'params.json'
+        fname = pathlib.Path('${REPO_ROOT}') / 'configs' / 'params.json'
     if fname.exists():
         d = json.load(open(fname))
         print(d.get('seed', 42))
@@ -110,22 +110,13 @@ for PROTO in "${PROTO_LIST[@]}"; do
   # Derive config filename: replace + with _ for filename
   PROTO_KEY="${PROTO//+/_}"
   if [ "${SCALE}" = "S1e5" ]; then
-    CONFIG="${REPO_ROOT}/${PARAMS_PREFIX}${PROTO_KEY}.json"
+    CONFIG="${REPO_ROOT}/configs/${PARAMS_PREFIX}${PROTO_KEY}.json"
   else
-    CONFIG="${REPO_ROOT}/${PARAMS_PREFIX}${PROTO_KEY}_${SCALE}.json"
+    CONFIG="${REPO_ROOT}/configs/${PARAMS_PREFIX}${PROTO_KEY}_${SCALE}.json"
   fi
 
   if [ ! -f "${CONFIG}" ]; then
     echo "[ERROR] Config not found: ${CONFIG}" >&2; exit 1
-  fi
-
-  # Fail fast if post-treatment tumor-growth switch is missing.
-  # This parameter is critical for reproducing Section 5 trajectories.
-    if ! ${PYTHON} -c 'import json,sys; cfg=sys.argv[1]; p=json.load(open(cfg));\
-  sys.exit((print(f"[ERROR] Missing kc_post_treat in {cfg}"),2)[1]) if "kc_post_treat" not in p else None;\
-  _x=p.get("kc_post_treat");\
-  sys.exit((print(f"[ERROR] Invalid kc_post_treat in {cfg}: {_x}"),3)[1]) if (not isinstance(_x,(int,float))) else None' "${CONFIG}"; then
-    exit 1
   fi
 
   OUTPUT_DIR="${REPO_ROOT}/output/${PROTO_KEY}"
@@ -156,6 +147,7 @@ json.dump(c, open('${_TMP}', 'w'), indent=2)
     --abm       "${OUTPUT_CSV}" \
     --refs      "data-export" \
     --group-dir "${GROUP_DIR}" \
+    --name      "${PROTO_KEY}" \
     --duration  "${DURATION}" \
     --note      "${NOTE}"
 

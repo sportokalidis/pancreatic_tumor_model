@@ -8,7 +8,7 @@
 #   2 → Abraxane
 #   3 → Abraxane + Anti-CD47
 #
-# Results land in: runs_treatment/<TIMESTAMP>_<SCALE>_s<SEED>/
+# Results land in: runs/treatment/<TIMESTAMP>_<SCALE>_s<SEED>/
 #
 # Submit:
 #   sbatch scripts/hpc/job_treatment.sh
@@ -55,9 +55,9 @@ PROTO="${PROTOCOLS[${SLURM_ARRAY_TASK_ID:-0}]}"
 
 # Config file (S1e5 omits the scale suffix to match existing filenames)
 if [ "${SCALE}" = "S1e5" ]; then
-  CONFIG="${REPO_ROOT}/${PARAMS_PREFIX}${PROTO}.json"
+  CONFIG="${REPO_ROOT}/configs/${PARAMS_PREFIX}${PROTO}.json"
 else
-  CONFIG="${REPO_ROOT}/${PARAMS_PREFIX}${PROTO}_${SCALE}.json"
+  CONFIG="${REPO_ROOT}/configs/${PARAMS_PREFIX}${PROTO}_${SCALE}.json"
 fi
 
 if [ ! -f "${CONFIG}" ]; then
@@ -105,7 +105,7 @@ else
   GID="$(cat "${GROUP_ID_FILE}" 2>/dev/null || echo "unknown")"
 fi
 
-GROUP_DIR="${REPO_ROOT}/runs_treatment/${GID}"
+GROUP_DIR="${REPO_ROOT}/runs/treatment/${GID}"
 mkdir -p "${GROUP_DIR}"
 
 "${PYTHON}" "${REPO_ROOT}/scripts/save_run.py" \
@@ -113,6 +113,7 @@ mkdir -p "${GROUP_DIR}"
   --abm       "${OUTPUT_DIR}/populations.csv" \
   --refs      "${REPO_ROOT}/data-export" \
   --group-dir "${GROUP_DIR}" \
+  --name      "${PROTO}" \
   --duration  "$(( END - START ))" \
   --note      "${NOTE}"
 

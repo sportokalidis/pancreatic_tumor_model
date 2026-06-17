@@ -107,7 +107,7 @@ export OMP_NUM_THREADS="${THREADS}"
 # Without it, numa_alloc_onnode fails on multi-NUMA HPC nodes.
 export OMP_PROC_BIND=true
 
-SEED=$(${PYTHON} -c "import json; print(json.load(open('${REPO_ROOT}/params.json')).get('seed',42))" 2>/dev/null || echo 42)
+SEED=$(${PYTHON} -c "import json; print(json.load(open('${REPO_ROOT}/configs/params.json')).get('seed',42))" 2>/dev/null || echo 42)
 [ -n "${SEED_OVERRIDE}" ] && SEED="${SEED_OVERRIDE}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
@@ -117,9 +117,9 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 if [ "${MODE}" = "base" ]; then
   # Select config file
   if [ "${SCALE}" = "S1e5" ]; then
-    CONFIG="${REPO_ROOT}/params.json"
+    CONFIG="${REPO_ROOT}/configs/params.json"
   else
-    CONFIG="${REPO_ROOT}/params_${SCALE}.json"
+    CONFIG="${REPO_ROOT}/configs/params_${SCALE}.json"
   fi
 
   # Auto-generate rescaled params if missing
@@ -127,12 +127,12 @@ if [ "${MODE}" = "base" ]; then
     echo "[INFO] ${CONFIG} not found — generating via rescale_params.py..."
     S_NUM="${SCALE#S}"   # e.g. S1e4 → 1e4
     ${PYTHON} "${REPO_ROOT}/scripts/rescale_params.py" \
-      "${REPO_ROOT}/params.json" "${S_NUM}" "${CONFIG}"
+      "${REPO_ROOT}/configs/params.json" "${S_NUM}" "${CONFIG}"
   fi
 
-  # Write directly into runs/ with consistent name format TIMESTAMP_SCALE_sSEED
+  # Write directly into runs/base/ with name format TIMESTAMP_SCALE_sSEED
   RUN_ID="${TIMESTAMP}_${SCALE}_s${SEED}"
-  OUTPUT_DIR="${REPO_ROOT}/runs/${RUN_ID}"
+  OUTPUT_DIR="${REPO_ROOT}/runs/base/${RUN_ID}"
   mkdir -p "${OUTPUT_DIR}"
 
   echo "[2/2] Running base model  (scale=${SCALE}  seed=${SEED}  threads=${THREADS})"
@@ -179,7 +179,7 @@ IFS=',' read -ra PROTO_LIST <<< "${PROTOCOLS}"
 N_PROTO=${#PROTO_LIST[@]}
 echo "[2/2] Running ${N_PROTO} treatment protocols  (scale=${SCALE}  threads=${THREADS}  parallel=${PARALLEL})"
 
-GROUP_DIR="${REPO_ROOT}/runs_treatment/${TIMESTAMP}_${SCALE}_s${SEED}"
+GROUP_DIR="${REPO_ROOT}/runs/treatment/${TIMESTAMP}_${SCALE}_s${SEED}"
 mkdir -p "${GROUP_DIR}"
 mkdir -p "${REPO_ROOT}/logs"
 echo "  Group folder: ${GROUP_DIR}"
@@ -187,9 +187,9 @@ echo "  Group folder: ${GROUP_DIR}"
 PIDS=()
 for PROTO in "${PROTO_LIST[@]}"; do
   if [ "${SCALE}" = "S1e5" ]; then
-    CONFIG="${REPO_ROOT}/params_treat_${PROTO}.json"
+    CONFIG="${REPO_ROOT}/configs/params_treat_${PROTO}.json"
   else
-    CONFIG="${REPO_ROOT}/params_treat_${PROTO}_${SCALE}.json"
+    CONFIG="${REPO_ROOT}/configs/params_treat_${PROTO}_${SCALE}.json"
   fi
   [ ! -f "${CONFIG}" ] && { echo "[ERROR] Config not found: ${CONFIG}" >&2; exit 1; }
 
@@ -218,6 +218,7 @@ json.dump(c, open('$tmp_cfg', 'w'), indent=2)
       --abm       "${outdir}/populations.csv" \
       --refs      "${REPO_ROOT}/data-export" \
       --group-dir "${GROUP_DIR}" \
+      --name      "${proto}" \
       --duration  "$(( end - start ))" \
       --note      "${NOTE}"
   }
@@ -243,6 +244,7 @@ json.dump(c, open('${_TMP}', 'w'), indent=2)
       --abm       "${OUTPUT_DIR}/populations.csv" \
       --refs      "${REPO_ROOT}/data-export" \
       --group-dir "${GROUP_DIR}" \
+      --name      "${PROTO}" \
       --duration  "$(( END - START ))" \
       --note      "${NOTE}"
   fi
