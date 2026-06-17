@@ -128,6 +128,39 @@ void SimParam::LoadParams(const std::string& filename) {
   load_real("r_cleared_by_N",  r_cleared_by_N);
   load_real("r_decay",         r_decay);
 
+  // Drug treatment (Section 5) — optional, default off
+  load_bool("treat_gem",   treat_gem);
+  load_bool("treat_abr",   treat_abr);
+  load_bool("treat_acd47", treat_acd47);
+  load_real("treat_start_day", treat_start_day);
+  load_real("gem_gamma",     gem_gamma);
+  load_real("gem_dose",      gem_dose);
+  load_real("gem_freq_days", gem_freq_days);
+  load_real("gem_end_day",   gem_end_day);
+  load_real("gem_c_c",       gem_c_c);
+  load_real("gem_c_p",       gem_c_p);
+  load_real("gem_c_immune",  gem_c_immune);
+  load_real("abr_gamma",     abr_gamma);
+  load_real("abr_dose",      abr_dose);
+  load_real("abr_freq_days", abr_freq_days);
+  load_real("abr_end_day",   abr_end_day);
+  load_real("abr_c_c",       abr_c_c);
+  load_real("abr_c_p",       abr_c_p);
+  load_real("abr_c_immune",  abr_c_immune);
+  load_real("acd47_end_day",  acd47_end_day);
+  load_real("acd47_e_boost",  acd47_e_boost);
+
+  // Cancer Stem Cell (Section 6) — optional, default off
+  load_bool("csc_enable",     csc_enable);
+  load_size("S0",             S0);
+  load_real("csc_a1",         csc_a1);
+  load_real("csc_a2",         csc_a2);
+  load_real("csc_a3",         csc_a3);
+  load_real("csc_lambda_max", csc_lambda_max);
+  load_real("csc_lambda_min", csc_lambda_min);
+  load_real("csc_sigma",      csc_sigma);
+  load_real("csc_delta_s",    csc_delta_s);
+
   // Colors
   load_int("color_tumor",     color_tumor);
   load_int("color_tumor_div", color_tumor_div);
@@ -136,6 +169,7 @@ void SimParam::LoadParams(const std::string& filename) {
   load_int("color_nk",        color_nk);
   load_int("color_helper",    color_helper);
   load_int("color_treg",      color_treg);
+  load_int("color_csc",       color_csc);
 }
 
 void SimParam::PrintParams() const {

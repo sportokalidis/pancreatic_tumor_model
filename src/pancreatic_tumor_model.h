@@ -193,10 +193,35 @@ class TRegCell : public Cell {
   int color_ = 0;
 };
 
+// S — Cancer Stem Cell (CSC), Paper Section 6. OPTIONAL: only seeded and grown
+// when csc_enable=true.  Inert otherwise (no agents created).
+class CancerStemCell : public Cell {
+  BDM_AGENT_HEADER(CancerStemCell, Cell, 1);
+
+ public:
+  CancerStemCell() = default;
+  explicit CancerStemCell(const Real3& p) {
+    SetPosition(p);
+    SetDiameter(2.0 * SP()->cell_radius_um);
+    color_ = SP()->color_csc;
+  }
+
+  void Initialize(const NewAgentEvent& event) override {
+    Base::Initialize(event);
+    color_ = bdm_static_cast<CancerStemCell*>(event.existing_agent)->color_;
+  }
+
+  void SetCellColor(int c) { color_ = c; }
+  int  GetCellColor() const { return color_; }
+
+ private:
+  int color_ = 0;
+};
+
 // ============================================================================
 // Population census
 // ============================================================================
-struct Counts { size_t C=0, P=0, E=0, N=0, H=0, R=0; };
+struct Counts { size_t C=0, P=0, E=0, N=0, H=0, R=0, S=0; };  // S = Cancer Stem Cells
 
 // Global census: computed at most once per step via double-checked locking.
 // Thread-safe: multiple behaviors call RefreshIfNeeded() concurrently but only
@@ -227,6 +252,7 @@ struct GlobalCensus {
       else if (dynamic_cast<NKCell*>(a))        ++c.N;
       else if (dynamic_cast<HelperTCell*>(a))   ++c.H;
       else if (dynamic_cast<TRegCell*>(a))      ++c.R;
+      else if (dynamic_cast<CancerStemCell*>(a)) ++c.S;
     });
     cnt = c;
     step_cached.store(step, std::memory_order_release);
@@ -247,6 +273,7 @@ struct LocalNeighborhoodCounter {
       else if (dynamic_cast<NKCell*>(nb))        ++out->N;
       else if (dynamic_cast<HelperTCell*>(nb))   ++out->H;
       else if (dynamic_cast<TRegCell*>(nb))      ++out->R;
+      else if (dynamic_cast<CancerStemCell*>(nb)) ++out->S;
     }
   };
 
@@ -308,6 +335,77 @@ struct EffCounts {
 };
 
 // ============================================================================
+// DrugState  (Paper Section 5) — OPTIONAL, only active when treat_* flags set.
+//
+// Holds drug concentrations M_gem, M_abr and the Anti-CD47 active flag.
+// Refreshed at most once per step (double-checked locking like GlobalCensus):
+//   M *= exp(-γ·dt)               (exponential PK decay)
+//   M += dose on injection steps  (integer-step grid, no float drift)
+// When no treatment flag is set, RefreshIfNeeded() short-circuits and all
+// concentrations stay 0 — so the base model path is completely unaffected.
+// ============================================================================
+struct DrugState {
+  std::atomic<size_t> step_cached{std::numeric_limits<size_t>::max()};
+  std::mutex mtx;
+
+  real_t M_gem = 0.0;
+  real_t M_abr = 0.0;
+  bool   acd47_active = false;
+
+  static DrugState& Instance() { static DrugState ds; return ds; }
+
+  void RefreshIfNeeded() {
+    auto* sim   = Simulation::GetActive();
+    size_t step = sim->GetScheduler()->GetSimulatedSteps();
+    if (step_cached.load(std::memory_order_acquire) == step) return;
+
+    std::lock_guard<std::mutex> lock(mtx);
+    if (step_cached.load(std::memory_order_relaxed) == step) return;
+
+    const auto* sp = SP();
+    // Short-circuit: no treatment enabled → base model, concentrations stay 0.
+    if (!sp->treat_gem && !sp->treat_abr && !sp->treat_acd47) {
+      step_cached.store(step, std::memory_order_release);
+      return;
+    }
+
+    const real_t dt_day  = sp->dt_minutes / 1440.0;
+    const real_t day_off = 7.0;                  // paper day 7 = simulation day 0
+    const real_t spd_f   = 1440.0 / sp->dt_minutes;  // steps per day
+
+    auto s_of = [&](real_t pday) -> size_t {
+      real_t sim_day = pday - day_off;
+      return (sim_day <= 0.0) ? 0 : static_cast<size_t>(std::round(sim_day * spd_f));
+    };
+    auto is_inject = [&](size_t s0, size_t s1, size_t freq) -> bool {
+      return step >= s0 && step <= s1 && ((step - s0) % freq == 0);
+    };
+
+    if (sp->treat_gem) {
+      M_gem *= std::exp(-sp->gem_gamma * dt_day);
+      size_t s0   = s_of(sp->treat_start_day);
+      size_t s1   = s_of(sp->gem_end_day);
+      size_t freq = static_cast<size_t>(std::round(sp->gem_freq_days * spd_f));
+      if (freq > 0 && is_inject(s0, s1, freq)) M_gem += sp->gem_dose;
+    }
+
+    if (sp->treat_abr) {
+      M_abr *= std::exp(-sp->abr_gamma * dt_day);
+      size_t s0   = s_of(sp->treat_start_day);
+      size_t s1   = s_of(sp->abr_end_day);
+      size_t freq = static_cast<size_t>(std::round(sp->abr_freq_days * spd_f));
+      if (freq > 0 && is_inject(s0, s1, freq)) M_abr += sp->abr_dose;
+    }
+
+    acd47_active = sp->treat_acd47
+                && step >= s_of(sp->treat_start_day)
+                && step <= s_of(sp->acd47_end_day);
+
+    step_cached.store(step, std::memory_order_release);
+  }
+};
+
+// ============================================================================
 // Population logger
 // Owns the CSV file. Created once in Simulate(), stays alive for the run.
 // Behaviors write via PopulationLogger::Instance().
@@ -324,16 +422,21 @@ struct PopulationLogger {
     std::filesystem::create_directories(dir);
     std::string path = dir + "/populations.csv";
     csv.open(path);
-    csv << "step,days,C,P,E,N,H,R,total\n";
+    // Unified schema: S is 0 unless CSC enabled; M_gem/M_abr are 0 unless
+    // treatment enabled. Python readers select columns by name, so the extra
+    // columns are harmless for base-model runs.
+    csv << "step,days,C,P,E,N,H,R,S,total,M_gem,M_abr\n";
     csv.flush();
   }
 
   void Write(size_t step, real_t t_day,
-             size_t C, size_t P, size_t E, size_t N, size_t H, size_t R) {
+             size_t C, size_t P, size_t E, size_t N, size_t H, size_t R,
+             size_t S = 0, real_t M_gem = 0.0, real_t M_abr = 0.0) {
     csv << step << "," << t_day << ","
         << C << "," << P << "," << E << ","
-        << N << "," << H << "," << R << ","
-        << (C + P + E + N + H + R) << "\n";
+        << N << "," << H << "," << R << "," << S << ","
+        << (C + P + E + N + H + R + S) << ","
+        << M_gem << "," << M_abr << "\n";
     csv.flush();
   }
 };
@@ -393,7 +496,13 @@ class TumorBehavior : public Behavior {
     real_t killE = sp->c_kill_by_E * cnt.E * inhibit_R;
     real_t killN = sp->c_kill_by_N * cnt.N;
 
-    if (rng->Uniform(0, 1) < ProbFromRate(killE + killN, dt_day)) {
+    // --- Drug kill (Eq. 5.1): c_c·(1−e^{−M}) — 0 when treatment disabled ---
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+    real_t drug_kill = sp->gem_c_c * (1.0 - std::exp(-ds.M_gem))
+                     + sp->abr_c_c * (1.0 - std::exp(-ds.M_abr));
+
+    if (rng->Uniform(0, 1) < ProbFromRate(killE + killN + drug_kill, dt_day)) {
       ctxt->RemoveAgent(c->GetUid());
     }
   }
@@ -414,8 +523,12 @@ class PSCBehavior : public Behavior {
     const real_t dt_day = sp->dt_minutes / 1440.0;
     const EffCounts cnt(GetCounts(*psc), DensityCompensation());
 
-    // --- Death (lambda_p*P) — checked independently ---
-    if (rng->Uniform(0, 1) < ProbFromRate(sp->p_base_death, dt_day)) {
+    // --- Death (lambda_p*P + drug kill Eq. 5.1) — checked independently ---
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+    real_t drug_kill = sp->gem_c_p * (1.0 - std::exp(-ds.M_gem))
+                     + sp->abr_c_p * (1.0 - std::exp(-ds.M_abr));
+    if (rng->Uniform(0, 1) < ProbFromRate(sp->p_base_death + drug_kill, dt_day)) {
       ctxt->RemoveAgent(psc->GetUid());
       return;
     }
@@ -463,9 +576,14 @@ class EffectorBehavior : public Behavior {
     // c_e·C is local (direct tumor contact). δ_e·R uses global R (cytokine-mediated).
     const real_t R_global_e = sp->use_local_counts
         ? static_cast<real_t>(GetGlobalCounts().R) : cnt.R;
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+    real_t drug_kill = sp->gem_c_immune * (1.0 - std::exp(-ds.M_gem))
+                     + sp->abr_c_immune * (1.0 - std::exp(-ds.M_abr));
     real_t die = sp->e_base_death
                + sp->e_inact_by_C * cnt.C       // c_e·C (local)
-               + sp->e_suppr_by_R * R_global_e;  // δ_e·R (global)
+               + sp->e_suppr_by_R * R_global_e  // δ_e·R (global)
+               + drug_kill;                      // Eq. 5.1 (0 if no treatment)
 
     if (rng->Uniform(0, 1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(e->GetUid());
@@ -475,6 +593,8 @@ class EffectorBehavior : public Behavior {
     // --- Per-cell proliferation (Eq. 2.3, p_e·H·E/(g_e+H) term) ---
     // Constant influx a_e handled by SourceBehavior.
     real_t div_rate = sp->e_help_from_H * Sat(cnt.H, sp->e_help_from_H_K);
+    // Anti-CD47 (Eq. 5.x): extra CTL proliferation while active (0 otherwise).
+    if (ds.acd47_active) div_rate += sp->acd47_e_boost;
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       e->Divide();
@@ -509,9 +629,14 @@ class NKBehavior : public Behavior {
     // --- Death (Eq. 2.4 death terms): b_n·N + c_n·N·C + δ_n·R·N ---
     const real_t R_global_n = sp->use_local_counts
         ? static_cast<real_t>(GetGlobalCounts().R) : cnt.R;
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+    real_t drug_kill = sp->gem_c_immune * (1.0 - std::exp(-ds.M_gem))
+                     + sp->abr_c_immune * (1.0 - std::exp(-ds.M_abr));
     real_t die = sp->n_base_death
                + sp->n_inact_by_C * cnt.C       // c_n·C (local, direct contact)
-               + sp->n_suppr_by_R * R_global_n;  // δ_n·R (global, cytokine)
+               + sp->n_suppr_by_R * R_global_n  // δ_n·R (global, cytokine)
+               + drug_kill;                      // Eq. 5.1 (0 if no treatment)
 
     if (rng->Uniform(0, 1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(n->GetUid());
@@ -555,8 +680,13 @@ class HelperBehavior : public Behavior {
     // --- Death (Eq. 2.5 death terms): b_h·H + δ_h·R·H ---
     const real_t R_global_h = sp->use_local_counts
         ? static_cast<real_t>(GetGlobalCounts().R) : cnt.R;
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+    real_t drug_kill = sp->gem_c_immune * (1.0 - std::exp(-ds.M_gem))
+                     + sp->abr_c_immune * (1.0 - std::exp(-ds.M_abr));
     real_t die = sp->h_base_death
-               + sp->h_suppr_by_R * R_global_h;  // δ_h·R (global, cytokine)
+               + sp->h_suppr_by_R * R_global_h  // δ_h·R (global, cytokine)
+               + drug_kill;                      // Eq. 5.1 (0 if no treatment)
 
     if (rng->Uniform(0, 1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(h->GetUid());
@@ -597,10 +727,15 @@ class TRegBehavior : public Behavior {
     const real_t dt_day = sp->dt_minutes / 1440.0;
     const EffCounts cnt(GetCounts(*r), DensityCompensation());
 
-    // --- Death (Eq. 2.6 death terms): δ_r·R + r·N·R ---
+    // --- Death (Eq. 2.6 death terms): δ_r·R + r·N·R + drug kill (Eq. 5.1) ---
     // r·N is bilinear in N.
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+    real_t drug_kill = sp->gem_c_immune * (1.0 - std::exp(-ds.M_gem))
+                     + sp->abr_c_immune * (1.0 - std::exp(-ds.M_abr));
     real_t die = sp->r_decay
-               + sp->r_cleared_by_N * cnt.N;  // r·N (bilinear)
+               + sp->r_cleared_by_N * cnt.N  // r·N (bilinear)
+               + drug_kill;                   // Eq. 5.1 (0 if no treatment)
 
     if (rng->Uniform(0, 1) < ProbFromRate(die, dt_day)) {
       ctxt->RemoveAgent(r->GetUid());
@@ -613,6 +748,49 @@ class TRegBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       r->Divide();
+    }
+  }
+};
+
+// ============================================================================
+// CSCBehavior  (Paper Section 6, Eq. 6.7) — OPTIONAL, only runs when csc_enable.
+// Self-renewal rate switches via an arctan in C:
+//   C ≪ σ (tumor suppressed)  → λ ≈ λ_max  (CSCs proliferate fast → relapse)
+//   C ≫ σ (tumor large)       → λ ≈ λ_min  (CSCs grow minimally)
+// The (a2+2a3)·S source of new PCCs to Eq. 2.1 is handled by SourceBehavior.
+// ============================================================================
+class CSCBehavior : public Behavior {
+  BDM_BEHAVIOR_HEADER(CSCBehavior, Behavior, 1);
+
+ public:
+  CSCBehavior() { AlwaysCopyToNew(); }
+
+  void Run(Agent* a) override {
+    if (!SP()->csc_enable) return;
+
+    auto* s    = bdm_static_cast<CancerStemCell*>(a);
+    auto* ctxt = Simulation::GetActive()->GetExecutionContext();
+    auto* rng  = Simulation::GetActive()->GetRandom();
+    const auto* sp = SP();
+
+    const real_t dt_day = sp->dt_minutes / 1440.0;
+
+    // --- Death (δ_S·S) — paper sets δ_S = 0 for aggressive progression ---
+    if (sp->csc_delta_s > 0.0 &&
+        rng->Uniform(0, 1) < ProbFromRate(sp->csc_delta_s, dt_day)) {
+      ctxt->RemoveAgent(s->GetUid());
+      return;
+    }
+
+    // --- Self-renewal: λ(C)·(a1−a3)  [Eq. 6.7], global C (all CSCs see same C) ---
+    const real_t C_global = static_cast<real_t>(GetGlobalCounts().C);
+    real_t lam = -(std::atan(C_global - sp->csc_sigma) + M_PI / 2.0)
+                  * (sp->csc_lambda_max - sp->csc_lambda_min) / M_PI
+                  + sp->csc_lambda_max;
+    real_t div_rate = lam * (sp->csc_a1 - sp->csc_a3);
+
+    if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
+      s->Divide();
     }
   }
 };
@@ -669,6 +847,11 @@ class SourceBehavior : public Behavior {
       r->AddBehavior(new TRegBehavior());
       ctxt->AddAgent(r);
     };
+    auto spawn_c = [&]() {  // new PCC produced by a CSC division (Eq. 6.1)
+      auto* c = new TumorCell(rpos());
+      c->AddBehavior(new TumorBehavior());
+      ctxt->AddAgent(c);
+    };
 
     // Poisson spawning: deterministically spawn floor(λ) cells and stochastically
     // +1 with probability frac(λ), where λ = rate * dt_day.
@@ -690,6 +873,12 @@ class SourceBehavior : public Behavior {
     spawn_poisson(spawn_r, sp->r_base_src);                                        // (1) constant a
     spawn_poisson(spawn_r, sp->r_induced_by_E * static_cast<real_t>(cnt.E));      // (2) a_r·E
     spawn_poisson(spawn_r, sp->r_induced_by_H * static_cast<real_t>(cnt.H));      // (3) b_r·H
+
+    // Eq. 6.1: CSC→PCC source (a2+2a3)·S — 0 when CSC disabled or no CSCs.
+    if (sp->csc_enable && cnt.S > 0) {
+      spawn_poisson(spawn_c,
+                    (sp->csc_a2 + 2.0 * sp->csc_a3) * static_cast<real_t>(cnt.S));
+    }
   }
 };
 
@@ -726,14 +915,23 @@ class ReportPopCounts : public Behavior {
     gc.RefreshIfNeeded();
     const Counts& c = gc.Get();
 
+    // Drug concentrations (0 when no treatment enabled).
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+
     const real_t day_since_start = t_day + 7.0;  // paper starts at day 7
     std::cout << "[day " << day_since_start << "] "
               << "C=" << c.C << " P=" << c.P
               << " E=" << c.E << " N=" << c.N
-              << " H=" << c.H << " R=" << c.R << "\n";
+              << " H=" << c.H << " R=" << c.R;
+    if (sp->csc_enable)  std::cout << " S=" << c.S;
+    if (sp->treat_gem || sp->treat_abr)
+      std::cout << " M_gem=" << ds.M_gem << " M_abr=" << ds.M_abr;
+    std::cout << "\n";
 
     PopulationLogger::Instance().Write(
-        steps, day_since_start, c.C, c.P, c.E, c.N, c.H, c.R);
+        steps, day_since_start, c.C, c.P, c.E, c.N, c.H, c.R,
+        c.S, ds.M_gem, ds.M_abr);
   }
 };
 
@@ -750,7 +948,7 @@ inline int Simulate(int argc, const char** argv) {
   // setup lambda. The actual params are loaded into sp after Simulation is up.
   // BDM_PARAMS env var overrides the default "params.json" path.
   const char* _params_env = std::getenv("BDM_PARAMS");
-  const std::string _params_path = _params_env ? _params_env : "params.json";
+  const std::string _params_path = _params_env ? _params_env : "configs/params.json";
   SimParam tmp;
   tmp.LoadParams(_params_path);
 
@@ -858,6 +1056,14 @@ inline int Simulate(int argc, const char** argv) {
     auto* r = new TRegCell(ClampPoint(rand_pos(), lo, hi));
     r->AddBehavior(new TRegBehavior());
     ctxt->AddAgent(r);
+  }
+  // Cancer Stem Cells (Section 6) — only seeded when enabled; co-located with tumor.
+  if (sp->csc_enable) {
+    for (size_t i = 0; i < sp->S0; ++i) {
+      auto* s = new CancerStemCell(pos_tumor());
+      s->AddBehavior(new CSCBehavior());
+      ctxt->AddAgent(s);
+    }
   }
 
   // Reporter + constant source (invisible agent; not using AlwaysCopyToNew)

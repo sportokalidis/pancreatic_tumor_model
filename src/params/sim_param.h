@@ -150,6 +150,64 @@ struct SimParam : public ParamGroup {
   real_t r_decay         = 1.0e-5;      // δ_r    natural decay
 
   // --------------------------------------------------------------------------
+  // Drug treatment (Paper Section 5, Eqs. 5.1–5.7) — OPTIONAL, default OFF.
+  //
+  // Drug concentration M evolves as: dM/dt = -γ·M + v_b(t)
+  // Drug kill per cell type x: rate += c_x·(1−e^{−M})
+  // Anti-CD47: +α·E·v_a(t) extra CTL proliferation when active
+  //
+  // Schedules use paper-day coordinates (simulation day 0 = paper day 7).
+  // Injection at treat_start_day, then every *_freq_days, up to *_end_day.
+  // --------------------------------------------------------------------------
+  bool treat_gem   = false;  // enable Gemcitabine
+  bool treat_abr   = false;  // enable Abraxane
+  bool treat_acd47 = false;  // enable Anti-CD47
+
+  real_t treat_start_day = 14.0;  // paper day all treatments begin
+
+  // Gemcitabine — Table 2 values; c_* in day⁻¹
+  real_t gem_gamma    = 5.54;          // γ_Gem  drug decay rate
+  real_t gem_dose     = 1.0;           // M increment per injection
+  real_t gem_freq_days = 7.0;          // injection interval (days)
+  real_t gem_end_day  = 56.0;          // last paper day of treatment
+  real_t gem_c_c      = 10.0;          // kill rate for C
+  real_t gem_c_p      = 7.5;           // kill rate for P
+  real_t gem_c_immune = 1.8;           // kill rate for E, N, H, R
+
+  // Abraxane — Table 2 values
+  real_t abr_gamma    = 0.6161308;
+  real_t abr_dose     = 1.0;
+  real_t abr_freq_days = 7.0;
+  real_t abr_end_day  = 28.0;
+  real_t abr_c_c      = 10.0;
+  real_t abr_c_p      = 10.0;
+  real_t abr_c_immune = 6.4;
+
+  // Anti-CD47 — α·E·v_a term: effective per-cell CTL boost rate (day⁻¹)
+  real_t acd47_end_day  = 35.0;
+  real_t acd47_e_boost  = 0.5;         // α·v_a_dose (tune vs Fig. 5)
+
+  // --------------------------------------------------------------------------
+  // Cancer Stem Cell (Paper Section 6, Eqs. 6.1 & 6.7) — OPTIONAL, default OFF.
+  // dS/dt = λ(C)·(a1-a3)·S - δ_S·S                                (Eq. 6.7)
+  //   → λ_max when C<<σ (tumor suppressed — CSCs proliferate fast)
+  //   → λ_min when C>>σ (tumor large  — CSCs grow minimally)
+  // dC/dt adds +(a2+2·a3)·S to Eq. 2.1.                          (Eq. 6.1)
+  //   CSC asymmetric / symmetric-to-PCC divisions supply new tumor cells.
+  //   a1=0.35, a2=0.65, a3=0, λ_min=0.001, λ_max=0.07, σ=1e7 cells (paper)
+  //   δ_S = 0 — paper neglects natural CSC death for aggressive progression
+  // --------------------------------------------------------------------------
+  bool   csc_enable     = false;
+  size_t S0             = 0;      // initial CSC count (usually 0 at t=0)
+  real_t csc_a1         = 0.35;   // prob. symmetric division CSC→CSC+CSC   [Table 3]
+  real_t csc_a2         = 0.65;   // prob. asymmetric division CSC→CSC+PCC
+  real_t csc_a3         = 0.0;    // prob. symmetric division CSC→PCC+PCC (rare)
+  real_t csc_lambda_max = 0.07;   // λ_max: max CSC proliferation (day⁻¹)   [Table 3]
+  real_t csc_lambda_min = 0.001;  // λ_min: min CSC proliferation (day⁻¹)   [Table 3]
+  real_t csc_sigma      = 100.0;  // σ÷S: tumor threshold in ABM cells (1e7÷1e5) [Table 3]
+  real_t csc_delta_s    = 0.0;    // δ_S: CSC death rate (day⁻¹); 0 per paper
+
+  // --------------------------------------------------------------------------
   // Visualization colors
   // --------------------------------------------------------------------------
   int color_tumor     = 8;
@@ -159,6 +217,7 @@ struct SimParam : public ParamGroup {
   int color_nk        = 3;
   int color_helper    = 6;
   int color_treg      = 1;
+  int color_csc       = 2;
 
   // --------------------------------------------------------------------------
   // Load / print
