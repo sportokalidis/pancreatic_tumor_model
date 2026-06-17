@@ -12,11 +12,12 @@
 #   singularity exec --cleanenv Singularity.sif bash scripts/hpc/build_hpc.sh
 #
 # Env vars (all optional):
-#   SCALE     S1e5 | S1e4 (default) | S1e3
-#   SEED      Override random seed (default: from params.json)
-#   NOTE      Label stored in run archive
-#   BDM_SIF   Path to Singularity image (default: <repo>/Singularity.sif)
-#   THREADS   OMP_NUM_THREADS (default: all cpus-per-task)
+#   SCALE        S1e5 | S1e4 (default) | S1e3 | S1e4_dt4h | S1e4_dt6h | ...
+#   SEED         Override random seed (default: from params.json)
+#   NOTE         Label stored in run archive
+#   BDM_SIF      Path to Singularity image (default: <repo>/Singularity.sif)
+#   THREADS      OMP_NUM_THREADS (default: all cpus-per-task)
+#   SKIP_BUILD   true (default) | false — set false to rebuild binary before run
 # ---------------------------------------------------------------------------
 #SBATCH --job-name=bdm-base
 #SBATCH --ntasks=1
@@ -73,12 +74,13 @@ EXTRA_ARGS+=(--threads "${THREADS}")
 echo "[job_base] scale=${SCALE}  sif=$(basename "${SIF}")  node=$(hostname)"
 echo "           sing=${SING}  SLURM_JOB_ID=${SLURM_JOB_ID:-local}"
 
+RUN_ARGS=(--scale "${SCALE}" --note "${NOTE}" "${EXTRA_ARGS[@]}")
+# Default to skipping build (binary pre-built); set SKIP_BUILD=false to rebuild.
+[ "${SKIP_BUILD:-true}" = true ] && RUN_ARGS+=(--skip-build)
+
 "${SING}" exec --cleanenv --bind /cephhome \
   --env "LD_PRELOAD=${REPO_ROOT}/scripts/hpc/fake_numa.so" \
   --env "PYTHONUSERBASE=/cephhome/eustavrosp/.local" \
   "${SIF}" \
   /bin/bash "${REPO_ROOT}/scripts/hpc/run_direct.sh" \
-  --scale      "${SCALE}" \
-  --skip-build \
-  --note       "${NOTE}" \
-  "${EXTRA_ARGS[@]}"
+  "${RUN_ARGS[@]}"

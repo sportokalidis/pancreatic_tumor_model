@@ -163,8 +163,11 @@ def main():
     # -----------------------------------------------------------------------
     # 2. Copy core files
     # -----------------------------------------------------------------------
-    shutil.copy2(params_path, run_dir / "params.json")
-    shutil.copy2(abm_path,    run_dir / "populations.csv")
+    if params_path.resolve() != (run_dir / "params.json").resolve():
+        shutil.copy2(params_path, run_dir / "params.json")
+    dst_pop = run_dir / "populations.csv"
+    if abm_path.resolve() != dst_pop.resolve():
+        shutil.copy2(abm_path, dst_pop)
     # Keep data-export/populations.csv in sync (used by legacy scripts)
     shutil.copy2(abm_path, REFS_DIR / "populations.csv")
 

@@ -670,26 +670,26 @@ class SourceBehavior : public Behavior {
       ctxt->AddAgent(r);
     };
 
-    // --- a_e: constant E influx (Eq. 2.3 — unconditional, no crowding) ---
-    if (rng->Uniform(0, 1) < ProbFromRate(sp->e_base_birth, dt_day)) spawn_e();
+    // Poisson spawning: deterministically spawn floor(λ) cells and stochastically
+    // +1 with probability frac(λ), where λ = rate * dt_day.
+    // This is unbiased at any dt — eliminates Bernoulli saturation when λ ≥ 1
+    // (which occurs for r_base_src at S≥1e4 even at dt=30 min).
+    auto spawn_poisson = [&](auto fn, real_t rate) {
+      real_t lam = rate * dt_day;
+      int    n   = static_cast<int>(lam);
+      if (rng->Uniform(0.0, 1.0) < (lam - static_cast<real_t>(n))) ++n;
+      for (int i = 0; i < n; ++i) fn();
+    };
 
-    // --- a_n: constant N influx (Eq. 2.4) ---
-    if (rng->Uniform(0, 1) < ProbFromRate(sp->n_base_birth, dt_day)) spawn_n();
+    // a_e, a_n, a_h: constant immune influx (Eqs. 2.3–2.5)
+    spawn_poisson(spawn_e, sp->e_base_birth);
+    spawn_poisson(spawn_n, sp->n_base_birth);
+    spawn_poisson(spawn_h, sp->h_base_birth);
 
-    // --- a_h: constant H influx (Eq. 2.5) ---
-    if (rng->Uniform(0, 1) < ProbFromRate(sp->h_base_birth, dt_day)) spawn_h();
-
-    // --- Eq. 2.6 three R source terms ---
-    // (1) constant a
-    if (rng->Uniform(0, 1) < ProbFromRate(sp->r_base_src, dt_day)) spawn_r();
-
-    // (2) a_r·E — absolute induction by CTLs
-    real_t rate_r_e = sp->r_induced_by_E * static_cast<real_t>(cnt.E);
-    if (rng->Uniform(0, 1) < ProbFromRate(rate_r_e, dt_day)) spawn_r();
-
-    // (3) b_r·H — absolute induction by Helper T cells
-    real_t rate_r_h = sp->r_induced_by_H * static_cast<real_t>(cnt.H);
-    if (rng->Uniform(0, 1) < ProbFromRate(rate_r_h, dt_day)) spawn_r();
+    // Eq. 2.6: three Treg source terms
+    spawn_poisson(spawn_r, sp->r_base_src);                                        // (1) constant a
+    spawn_poisson(spawn_r, sp->r_induced_by_E * static_cast<real_t>(cnt.E));      // (2) a_r·E
+    spawn_poisson(spawn_r, sp->r_induced_by_H * static_cast<real_t>(cnt.H));      // (3) b_r·H
   }
 };
 
