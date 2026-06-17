@@ -72,11 +72,16 @@ BINARY="${BUILD_DIR}/pancreatic_tumor_new"
 # ---- build ------------------------------------------------------------------
 if [ "${SKIP_BUILD}" = false ]; then
   echo "[1/2] Building..."
-  cmake -S "${REPO_ROOT}" -B "${BUILD_DIR}" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBIODYNAMO_ROOT="${BDM_BUILD}" \
-    -Wno-dev 2>&1 | tail -3
-  cmake --build "${BUILD_DIR}" --parallel "$(nproc)"
+  # flock prevents parallel SLURM tasks from racing on the shared build dir.
+  mkdir -p "${BUILD_DIR}"
+  (
+    flock -x 200
+    cmake -S "${REPO_ROOT}" -B "${BUILD_DIR}" \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBIODYNAMO_ROOT="${BDM_BUILD}" \
+      -Wno-dev 2>&1 | tail -3
+    cmake --build "${BUILD_DIR}" --parallel "$(nproc)"
+  ) 200>"${BUILD_DIR}/.build.lock"
   echo "      Build complete."
 fi
 
