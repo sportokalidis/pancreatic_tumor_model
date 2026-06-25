@@ -1,120 +1,80 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# SLURM array job — run all 4 treatment protocols in parallel.
+# job_treatment.sh — SLURM job: run drug-treatment protocols via Singularity.
 #
-# Each array task (0-3) handles one protocol:
-#   0 → Anti-CD47
-#   1 → Gemcitabine
-#   2 → Abraxane
-#   3 → Abraxane + Anti-CD47
+# Runs the unified flag-gated binary through run_direct.sh --treatment, which
+# selects each protocol's config in configs/, patches output_dir, runs the
+# binary (BDM_PARAMS), and archives every protocol under ONE group folder in
+# runs/treatment/.  All protocols run in parallel inside the single job.
 #
-# Results land in: runs/treatment/<TIMESTAMP>_<SCALE>_s<SEED>/
+# Submit from the HOST (outside the container):
 #
-# Submit:
-#   sbatch scripts/hpc/job_treatment.sh
+#   sbatch scripts/hpc/job_treatment.sh                       # Fig 5: 4 protocols, S1e4
+#   PROTOCOLS=abr_csc NOTE="Fig 6 relapse" sbatch scripts/hpc/job_treatment.sh
+#   SCALE=S1e5 sbatch scripts/hpc/job_treatment.sh
 #
-# Override any #SBATCH option at submit time:
-#   sbatch --partition=gpu --time=2:00:00 scripts/hpc/job_treatment.sh
-#
-# Environment variables (set before sbatch or in #SBATCH --export):
-#   SCALE          Scale label, e.g. S1e5 (default) or S1e4
-#   PARAMS_PREFIX  Config prefix  (default: params_treat_)
-#   NOTE           Human-readable label for this run group
-#   BDM_BUILD      Path to BioDynaMo build dir (auto-detected if unset)
-#   PYTHON         Path to python3 (auto-detected if unset)
+# Env vars (all optional):
+#   SCALE        S1e4 (default) | S1e5 | S1e3 — selects configs/params_treat_<p>_<SCALE>.json
+#   PROTOCOLS    Comma list (default: acd47,gem,abr,abr_acd47).
+#                Use "abr_csc" for the Fig 6 (Abraxane + CSC relapse) scenario.
+#   NOTE         Label stored in each run archive
+#   BDM_SIF      Path to Singularity image (default: Vega BioDynaMo SIF)
+#   SKIP_BUILD   true (default) | false — set false to rebuild binary first
 # ---------------------------------------------------------------------------
-
-#SBATCH --job-name=tumor_treatment
-#SBATCH --array=0-3
+#SBATCH --job-name=bdm-treat
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=16G
-#SBATCH --time=2:00:00
-#SBATCH --output=logs/slurm_treatment_%A_%a.out
-#SBATCH --error=logs/slurm_treatment_%A_%a.err
-# Uncomment and set your partition:
-##SBATCH --partition=compute
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=30G
+#SBATCH --time=16:00:00
+#SBATCH --output=logs/slurm-treat-%j.out
+#SBATCH --error=logs/slurm-treat-%j.err
 
-set -euo pipefail
+# SLURM copies the script to a spool dir, so BASH_SOURCE is unreliable.
+# REPO_ROOT is injected at submit time; fall back to SLURM_SUBMIT_DIR.
+REPO_ROOT="${REPO_ROOT:-${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)}}"
+REPO_ROOT="$(cd "${REPO_ROOT}" && pwd -P)"   # resolve symlinks → /cephhome/...
+SIF="${BDM_SIF:-/ceph/hpc/home/eustavrosp/biodynamo/Singularity.sif}"
+SCALE="${SCALE:-S1e4}"
+PROTOCOLS="${PROTOCOLS:-acd47,gem,abr,abr_acd47}"
+NOTE="${NOTE:-SLURM treatment scale=${SCALE} protocols=${PROTOCOLS}}"
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ ! -e "${SIF}" ]; then
+  echo "[ERROR] Singularity image not found: ${SIF}" >&2
+  echo "        Set BDM_SIF=/path/to/image.sif before submitting." >&2
+  exit 1
+fi
+
+# Locate singularity/apptainer — compute nodes may need a module load
+_find_sing() {
+  command -v singularity 2>/dev/null || command -v apptainer 2>/dev/null || echo ""
+}
+SING="$(_find_sing)"
+if [ -z "${SING}" ] && command -v module &>/dev/null; then
+  module load singularity 2>/dev/null || module load apptainer 2>/dev/null || true
+  SING="$(_find_sing)"
+fi
+if [ -z "${SING}" ]; then
+  echo "[ERROR] singularity/apptainer not found. Load the module and resubmit." >&2
+  exit 1
+fi
+
 mkdir -p "${REPO_ROOT}/logs"
 
-# Load portable environment (BioDynaMo + Python)
-source "${REPO_ROOT}/scripts/hpc/env.sh"
+echo "[job_treatment] scale=${SCALE}  protocols=${PROTOCOLS}  node=$(hostname)"
+echo "                sif=$(basename "${SIF}")  SLURM_JOB_ID=${SLURM_JOB_ID:-local}"
 
-SCALE="${SCALE:-S1e5}"
-PARAMS_PREFIX="${PARAMS_PREFIX:-params_treat_}"
-NOTE="${NOTE:-HPC treatment run}"
-BUILD_DIR="${REPO_ROOT}/build"
-BINARY="${BUILD_DIR}/pancreatic_tumor_new"
+# run_direct.sh --treatment runs every protocol in parallel and archives them
+# into one runs/treatment/<group> folder.
+RUN_ARGS=(--treatment --parallel
+          --scale "${SCALE}"
+          --protocols "${PROTOCOLS}"
+          --note "${NOTE}")
+# Default to skipping build (binary pre-built); set SKIP_BUILD=false to rebuild.
+[ "${SKIP_BUILD:-true}" = true ] && RUN_ARGS+=(--skip-build)
 
-# Protocol index → name mapping
-PROTOCOLS=("acd47" "gem" "abr" "abr_acd47")
-PROTO="${PROTOCOLS[${SLURM_ARRAY_TASK_ID:-0}]}"
-
-# Config file (S1e5 omits the scale suffix to match existing filenames)
-if [ "${SCALE}" = "S1e5" ]; then
-  CONFIG="${REPO_ROOT}/configs/${PARAMS_PREFIX}${PROTO}.json"
-else
-  CONFIG="${REPO_ROOT}/configs/${PARAMS_PREFIX}${PROTO}_${SCALE}.json"
-fi
-
-if [ ! -f "${CONFIG}" ]; then
-  echo "[ERROR] Config not found: ${CONFIG}" >&2; exit 1
-fi
-if [ ! -f "${BINARY}" ]; then
-  echo "[ERROR] Binary not found: ${BINARY}" >&2
-  echo "        Run 'bash scripts/hpc/build_hpc.sh' first." >&2; exit 1
-fi
-
-echo "================================================"
-echo "  Protocol: ${PROTO}   Scale: ${SCALE}"
-echo "  Config:   ${CONFIG}"
-echo "  CPUs:     ${SLURM_CPUS_PER_TASK:-1}"
-echo "  Node:     ${SLURMD_NODENAME:-local}"
-echo "  $(date)"
-echo "================================================"
-
-# BioDynaMo reads OMP_NUM_THREADS for parallelism
-export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
-
-OUTPUT_DIR="${REPO_ROOT}/output/hpc_${PROTO}"
-mkdir -p "${OUTPUT_DIR}"
-
-START=$(date +%s)
-cd "${REPO_ROOT}"
-"${BINARY}" --config "${CONFIG}" --output "${OUTPUT_DIR}"
-END=$(date +%s)
-echo "  Done in $(( END - START ))s  → ${OUTPUT_DIR}/populations.csv"
-
-# Archive into runs_treatment group (uses the shared group timestamp written
-# by task 0; other tasks detect it from the group_id file).
-GROUP_ID_FILE="${REPO_ROOT}/output/.hpc_group_id"
-if [ "${SLURM_ARRAY_TASK_ID:-0}" = "0" ]; then
-  SEED=$(${PYTHON} -c "import json; print(json.load(open('${CONFIG}')).get('seed',42))")
-  GID="$(date +%Y%m%d_%H%M%S)_${SCALE}_s${SEED}"
-  echo "${GID}" > "${GROUP_ID_FILE}"
-  echo "  Group ID: ${GID}"
-else
-  # Brief back-off: wait until task 0 writes the group id
-  for i in $(seq 1 30); do
-    [ -f "${GROUP_ID_FILE}" ] && break
-    sleep 2
-  done
-  GID="$(cat "${GROUP_ID_FILE}" 2>/dev/null || echo "unknown")"
-fi
-
-GROUP_DIR="${REPO_ROOT}/runs/treatment/${GID}"
-mkdir -p "${GROUP_DIR}"
-
-"${PYTHON}" "${REPO_ROOT}/scripts/save_run.py" \
-  --params    "${CONFIG}" \
-  --abm       "${OUTPUT_DIR}/populations.csv" \
-  --refs      "${REPO_ROOT}/data-export" \
-  --group-dir "${GROUP_DIR}" \
-  --name      "${PROTO}" \
-  --duration  "$(( END - START ))" \
-  --note      "${NOTE}"
-
-echo "  Archived → ${GROUP_DIR}/${PROTO}/"
+"${SING}" exec --cleanenv --bind /cephhome \
+  --env "LD_PRELOAD=${REPO_ROOT}/scripts/hpc/fake_numa.so" \
+  --env "PYTHONUSERBASE=/cephhome/eustavrosp/.local" \
+  "${SIF}" \
+  /bin/bash "${REPO_ROOT}/scripts/hpc/run_direct.sh" \
+  "${RUN_ARGS[@]}"

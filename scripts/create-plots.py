@@ -196,6 +196,61 @@ def plot_combined(df_abm, df_ode, paper_refs, out_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Figure 3: Individual per-cell-type plots
+# ---------------------------------------------------------------------------
+def plot_per_cell(df_abm, df_ode, paper_refs, out_dir: Path):
+    """Generate one figure per population (ABM, ODE, paper ref on same axis)."""
+    for pop in POPS:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        color = COLORS[pop]
+        pop_lc = pop.lower()
+        label = LABELS[pop]
+
+        # Paper reference (scatter)
+        if pop in paper_refs:
+            ref = paper_refs[pop]
+            ax.scatter(ref["day"], ref["count"],
+                       color=color, s=80, alpha=0.6, zorder=5,
+                       marker="o", label="Paper reference", edgecolors="black", linewidth=0.5)
+
+        # ODE (thick solid line)
+        if pop_lc in df_ode.columns:
+            ax.plot(df_ode["days"], df_ode[pop_lc],
+                    color=color, linewidth=3.0, linestyle="-",
+                    label="ODE (same params)", zorder=4)
+
+        # ABM (dashed line)
+        if pop_lc in df_abm.columns:
+            ax.plot(df_abm["days"], df_abm[pop_lc],
+                    color=color, linewidth=2.0, linestyle="--",
+                    alpha=0.85, label="ABM", zorder=3)
+
+        ax.set_xlabel("Day", fontsize=12)
+        ax.set_ylabel("Cell count", fontsize=12)
+        ax.set_title(label, fontsize=14, fontweight="bold")
+        ax.legend(fontsize=11, loc="best", framealpha=0.95)
+        ax.grid(True, linestyle=":", alpha=0.4)
+
+        # Log scale if dynamic range > 100×
+        all_vals = []
+        if pop_lc in df_ode.columns:
+            all_vals.extend(df_ode[pop_lc].tolist())
+        if pop_lc in df_abm.columns:
+            all_vals.extend(df_abm[pop_lc].tolist())
+        if pop in paper_refs:
+            all_vals.extend(paper_refs[pop]["count"].tolist())
+        positive = [v for v in all_vals if v > 0]
+        if positive and max(positive) / max(min(positive), 1) > 100:
+            ax.set_yscale("log")
+
+        plt.tight_layout()
+        out_path = out_dir / f"plot_{pop}.png"
+        plt.savefig(out_path, dpi=200, bbox_inches="tight")
+        print(f"Per-cell plot saved: {out_path}")
+        plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -236,6 +291,7 @@ def main():
 
     plot_grid(df_abm, df_ode, paper_refs, out_dir / "comparison_grid.png")
     plot_combined(df_abm, df_ode, paper_refs, out_dir / "comparison_combined.png")
+    plot_per_cell(df_abm, df_ode, paper_refs, out_dir)
 
     return 0
 
