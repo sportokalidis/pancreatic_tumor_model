@@ -130,13 +130,81 @@ def compute_fit_metrics(exp_df, sim_df, sim_col, sim_day_col="day"):
         "R2": r2(y_true, y_pred),
     }
 
-def compute_all_metrics(sim_csv: Path, refs_dir: Path) -> pd.DataFrame:
+def compute_all_metrics(sim_csv: Path, refs_dir: Optional[Path] = None, ode_csv: Optional[Path] = None, scale_s: float = 1e5) -> pd.DataFrame:
     """
-    Core logic: load sim CSV and all paper-reference CSVs from refs_dir,
-    compute fit metrics for every population.  Returns a DataFrame.
+    Core logic: compare ABM (sim_csv) against either:
+      1. ODE reference (ode_csv) — PREFERRED for validation (same scale/params)
+      2. Paper reference directory (refs_dir) — scaled to ABM's scale_S
+
+    Args:
+        sim_csv: Path to ABM populations CSV
+        refs_dir: Directory with paper reference CSVs (S=1e5)
+        ode_csv: Path to ODE reference CSV (same scale/params as ABM)
+        scale_s: Scale factor of ABM (e.g., 1e5, 1e4, 1e3). Used to scale paper refs.
+
+    Returns a DataFrame with fit metrics.
     """
     sim_df = pd.read_csv(sim_csv)
     sim_day_col = find_day_column(sim_df)
+
+    # Auto-detect scale_S from ABM if not provided
+    if scale_s == 1e5:
+        try:
+            import json
+            params_file = Path(sim_csv).parent / "params.json"
+            if params_file.exists():
+                with open(params_file) as f:
+                    params = json.load(f)
+                    scale_s = params.get("scale_S", 1e5)
+        except:
+            pass
+
+    # If ODE reference provided, use it (proper validation)
+    if ode_csv and ode_csv.exists():
+        ode_df = pd.read_csv(ode_csv)
+        ode_day_col = find_day_column(ode_df)
+
+        pops = ["Tumor", "PSC", "CD8", "NK", "HelperT", "Treg"]
+        tokens_map = {
+            "Tumor":   ["tumor", "c", "c_cells", "c-cells"],
+            "PSC":     ["psc", "p", "p_cells", "p-cells"],
+            "CD8":     ["cd8", "cd8+", "e", "e_cells", "e-cells"],
+            "NK":      ["nk", "n", "n_cells", "n-cells"],
+            "HelperT": ["helper", "helpert", "th", "h", "h_cells", "h-cells"],
+            "Treg":    ["treg", "tregs", "r", "r_cells", "r-cells"],
+        }
+
+        rows = []
+        for pop in pops:
+            ode_col = find_sim_column(ode_df, tokens_map[pop])
+            sim_col = find_sim_column(sim_df, tokens_map[pop])
+
+            if sim_col is None or ode_col is None:
+                rows.append({
+                    "population": pop, "sim_column": sim_col, "ode_column": ode_col,
+                    "status": "missing", "n_points_compared": 0, "MAE": np.nan,
+                    "RMSE": np.nan, "NRMSE_range": np.nan, "NRMSE_mean": np.nan,
+                    "MAPE_%": np.nan, "R2": np.nan
+                })
+                continue
+
+            # Create synthetic "paper ref" by treating ODE as ground truth
+            exp_df = ode_df[[ode_day_col, ode_col]].copy()
+            exp_df.columns = ["day", "cell_population"]
+
+            metrics = compute_fit_metrics(exp_df, sim_df, sim_col, sim_day_col)
+            rows.append({
+                "population": pop, "sim_column": sim_col, "ode_column": ode_col,
+                "status": "ok", **metrics
+            })
+        return pd.DataFrame(rows)
+
+    # Fallback: use paper reference directory (auto-scaled to ABM's scale_S)
+    if not refs_dir:
+        raise ValueError("Must provide either ode_csv or refs_dir")
+
+    # Paper references are at S=1e5; scale them to match ABM scale
+    scale_factor = scale_s / 1e5
 
     pop_map = {
         "Tumor":   {"exp_csv": refs_dir / "C-Cells_scaled_global.csv", "tokens": ["tumor", "c", "c_cells", "c-cells"]},
@@ -150,6 +218,9 @@ def compute_all_metrics(sim_csv: Path, refs_dir: Path) -> pd.DataFrame:
     rows = []
     for pop, meta in pop_map.items():
         exp_df = read_exp_no_header(meta["exp_csv"])
+        # Scale the paper reference to match ABM's scale_S
+        exp_df["cell_population"] = exp_df["cell_population"] * scale_factor
+
         sim_col = find_sim_column(sim_df, [t.lower() for t in meta["tokens"]])
         if sim_col is None:
             rows.append({
@@ -167,16 +238,33 @@ def compute_all_metrics(sim_csv: Path, refs_dir: Path) -> pd.DataFrame:
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Compute fit metrics vs paper reference")
+    import json
+    parser = argparse.ArgumentParser(description="Compute fit metrics: ABM vs ODE reference (preferred) or paper reference (auto-scaled)")
     parser.add_argument("--sim",  default=str(BASE_DIR / "populations.csv"),
                         help="Path to simulation populations CSV")
+    parser.add_argument("--ode-csv", default=None,
+                        help="Path to ODE reference CSV (PREFERRED: same scale/params as ABM)")
     parser.add_argument("--refs", default=str(BASE_DIR),
-                        help="Directory containing *_scaled_global.csv reference files")
+                        help="Directory with *_scaled_global.csv paper references (at S=1e5)")
     parser.add_argument("--out",  default=str(BASE_DIR),
                         help="Output directory for fit_metrics_summary.csv")
+    parser.add_argument("--scale-s", type=float, default=None,
+                        help="Scale factor (auto-detected from params.json if not provided)")
     args = parser.parse_args()
 
-    summary = compute_all_metrics(Path(args.sim), Path(args.refs))
+    # Auto-detect scale_S from params.json if not provided
+    scale_s = args.scale_s or 1e5
+    params_file = Path(args.sim).parent / "params.json"
+    if params_file.exists():
+        try:
+            with open(params_file) as f:
+                params = json.load(f)
+                scale_s = params.get("scale_S", scale_s)
+        except:
+            pass
+
+    ode_path = Path(args.ode_csv) if args.ode_csv else None
+    summary = compute_all_metrics(Path(args.sim), refs_dir=Path(args.refs), ode_csv=ode_path, scale_s=scale_s)
 
     out_path = Path(args.out) / "fit_metrics_summary.csv"
     summary.to_csv(out_path, index=False)

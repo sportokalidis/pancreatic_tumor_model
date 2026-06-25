@@ -72,13 +72,18 @@ def load_ode(path: Path) -> pd.DataFrame:
     return df
 
 
-def load_paper_ref(data_dir: Path) -> dict[str, pd.DataFrame]:
-    """Load per-population paper reference CSVs (no header, col0=day, col1=count)."""
+def load_paper_ref(data_dir: Path, scale_s: float = 1e5) -> dict[str, pd.DataFrame]:
+    """
+    Load per-population paper reference CSVs (no header, col0=day, col1=count).
+    Paper references are at S=1e5; scale them to match ABM's scale_S.
+    """
     refs = {}
+    scale_factor = scale_s / 1e5  # Paper refs are always S=1e5
     for pop in POPS:
         csv = data_dir / f"{pop}-Cells_scaled_global.csv"
         if csv.exists():
             df = pd.read_csv(csv, header=None, names=["day", "count"])
+            df["count"] = df["count"] * scale_factor
             refs[pop] = df
     return refs
 
@@ -254,15 +259,18 @@ def plot_per_cell(df_abm, df_ode, paper_refs, out_dir: Path):
 # Main
 # ---------------------------------------------------------------------------
 def main():
+    import json
     parser = argparse.ArgumentParser()
     parser.add_argument("--abm",    default="output/populations.csv",
                         help="ABM populations CSV (default: output/populations.csv)")
     parser.add_argument("--ode",    default="data-export/ode_reference.csv",
                         help="ODE reference CSV")
     parser.add_argument("--refs",   default="data-export",
-                        help="Directory containing *-Cells_scaled_global.csv")
+                        help="Directory containing *-Cells_scaled_global.csv (at S=1e5, auto-scaled)")
     parser.add_argument("--out",    default="data-export",
                         help="Output directory for figures")
+    parser.add_argument("--scale-s", type=float, default=None,
+                        help="Scale factor (auto-detected from params.json if not provided)")
     args = parser.parse_args()
 
     out_dir = Path(args.out)
@@ -281,9 +289,20 @@ def main():
         print(f"[ERROR] ODE reference not found: {ode_path} — run scripts/ode_reference.py first")
         return 1
 
+    # Auto-detect scale_S from params.json if not provided
+    scale_s = args.scale_s or 1e5
+    params_file = abm_path.parent / "params.json"
+    if params_file.exists():
+        try:
+            with open(params_file) as f:
+                params = json.load(f)
+                scale_s = params.get("scale_S", scale_s)
+        except:
+            pass
+
     df_abm = load_abm(abm_path)
     df_ode = load_ode(ode_path)
-    paper_refs = load_paper_ref(Path(args.refs))
+    paper_refs = load_paper_ref(Path(args.refs), scale_s=scale_s)
 
     print(f"ABM:   {len(df_abm)} rows, days {df_abm['days'].iloc[0]:.0f}–{df_abm['days'].iloc[-1]:.0f}")
     print(f"ODE:   {len(df_ode)} rows, days {df_ode['days'].iloc[0]:.0f}–{df_ode['days'].iloc[-1]:.0f}")
