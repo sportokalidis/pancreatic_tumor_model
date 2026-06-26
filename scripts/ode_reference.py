@@ -93,6 +93,7 @@ def build_paper_params(S: float) -> dict:
         "r_e":     0.0,
         "p_e":     0.125,
         "g_e":     _g / S,
+        "f_e":     0.4167,  # Table 1: (day^-1 ng^-1 mL)
         "delta_e": 1e-10 * S,
 
         # ---- NK N  (Eq. 2.4) ------------------------------------------------
@@ -101,6 +102,7 @@ def build_paper_params(S: float) -> dict:
         "c_n":     1e-11 * S,
         "p_n":     0.125,
         "g_n":     _g / S,
+        "f_n":     0.4167,  # Table 1: (day^-1 ng^-1 mL)
         "delta_n": 1e-10 * S,
 
         # ---- Helper H  (Eq. 2.5) --------------------------------------------
@@ -108,6 +110,7 @@ def build_paper_params(S: float) -> dict:
         "b_h":     2.0833e-4,
         "p_h":     0.125,
         "g_h":     _g / S,
+        "f_h":     0.4167,  # Table 1: (day^-1 ng^-1 mL)
         "delta_h": 1e-9 * S,
 
         # ---- Treg R  (Eq. 2.6) ----------------------------------------------
@@ -118,6 +121,12 @@ def build_paper_params(S: float) -> dict:
         "p_r":     0.125,
         "g_r":     _g / S,
         "r":       1e-11 * S,
+
+        # ---- Beta parameters for immune stimulation (Table 1) ----------------
+        # Appear in f_hat term: f_e*(beta_E*E + beta_N*N + beta_H*H)*E, etc.
+        "beta_E":  4.4691e-13,  # (ng mL^-1 cell^-1)
+        "beta_N":  4.4691e-13,  # (ng mL^-1 cell^-1)
+        "beta_H":  4.4691e-13,  # (ng mL^-1 cell^-1)
 
         # ---- Initial conditions (paper → ABM) -------------------------------
         "C0": round(4.886e7  / S),
@@ -152,24 +161,30 @@ def odes_paper(t, y, p):
           - p["lambda_p"] * P)
 
     # -- Effector E (Eq. 2.3) --
+    # Added: f_e * (beta_E*E + beta_N*N + beta_H*H) term
     dE = (p["a_e"]
           - p["b_e"]     * E
           - p["c_e"]     * E * C
           + p["r_e"]     * N * C
           + p["p_e"]     * H * E / (p["g_e"] + H)
+          + p["f_e"]     * (p["beta_E"] * E + p["beta_N"] * N + p["beta_H"] * H) * E
           - p["delta_e"] * R * E)
 
     # -- NK N (Eq. 2.4) --
+    # Added: f_n * (beta_E*E + beta_N*N + beta_H*H) term
     dN = (p["a_n"]
           - p["b_n"]     * N
           - p["c_n"]     * N * C
           + p["p_n"]     * H * N / (p["g_n"] + H)
+          + p["f_n"]     * (p["beta_E"] * E + p["beta_N"] * N + p["beta_H"] * H) * N
           - p["delta_n"] * R * N)
 
     # -- Helper H (Eq. 2.5) --
+    # Added: f_h * (beta_E*E + beta_N*N + beta_H*H) term
     dH = (p["a_h"]
           - p["b_h"]     * H
           + p["p_h"]     * H * H / (p["g_h"] + H)
+          + p["f_h"]     * (p["beta_E"] * E + p["beta_N"] * N + p["beta_H"] * H) * H
           - p["delta_h"] * R * H)
 
     # -- Treg R (Eq. 2.6) --
