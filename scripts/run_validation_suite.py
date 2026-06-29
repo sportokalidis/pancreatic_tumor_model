@@ -100,13 +100,13 @@ def submit_job(seed: int, scale: float, dt_hr: float, suite_dir: Path, repo_root
     # Create params file
     create_param_file(seed, scale, dt_hr, run_dir)
 
-    # Submit job
+    # Submit job with explicit output directory
     cmd = [
         "sbatch",
         "--partition=cpu",
         "--mem=30G",
         "--job-name", job_name,
-        "--export", f"ALL,REPO_ROOT={repo_root},SCALE={s_str}_{dt_str},SEED={seed},SKIP_BUILD=true",
+        "--export", f"ALL,REPO_ROOT={repo_root},SCALE={s_str}_{dt_str},SEED={seed},SKIP_BUILD=true,OUTPUT_DIR={run_dir}",
         "scripts/hpc/job_base.sh"
     ]
 

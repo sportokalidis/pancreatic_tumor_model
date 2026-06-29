@@ -75,6 +75,8 @@ echo "[job_base] scale=${SCALE}  sif=$(basename "${SIF}")  node=$(hostname)"
 echo "           sing=${SING}  SLURM_JOB_ID=${SLURM_JOB_ID:-local}"
 
 RUN_ARGS=(--scale "${SCALE}" --note "${NOTE}" "${EXTRA_ARGS[@]}")
+# Add explicit output directory if provided (from validation suite runner)
+[ -n "${OUTPUT_DIR:-}" ] && RUN_ARGS+=(--output-dir "${OUTPUT_DIR}")
 # Default to skipping build (binary pre-built); set SKIP_BUILD=false to rebuild.
 [ "${SKIP_BUILD:-true}" = true ] && RUN_ARGS+=(--skip-build)
 

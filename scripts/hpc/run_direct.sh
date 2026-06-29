@@ -51,17 +51,19 @@ PARALLEL=false
 SKIP_BUILD=false
 NOTE="HPC direct run"
 SEED_OVERRIDE=""
+OUTPUT_DIR=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --scale)      SCALE="$2";          shift 2 ;;
-    --treatment)  MODE="treatment";    shift ;;
-    --protocols)  PROTOCOLS="$2";      shift 2 ;;
-    --threads)    THREADS="$2";        shift 2 ;;
-    --parallel)   PARALLEL=true;       shift ;;
-    --skip-build) SKIP_BUILD=true;     shift ;;
-    --note)       NOTE="$2";           shift 2 ;;
-    --seed)       SEED_OVERRIDE="$2";  shift 2 ;;
+    --scale)       SCALE="$2";          shift 2 ;;
+    --treatment)   MODE="treatment";    shift ;;
+    --protocols)   PROTOCOLS="$2";      shift 2 ;;
+    --threads)     THREADS="$2";        shift 2 ;;
+    --parallel)    PARALLEL=true;       shift ;;
+    --skip-build)  SKIP_BUILD=true;     shift ;;
+    --note)        NOTE="$2";           shift 2 ;;
+    --seed)        SEED_OVERRIDE="$2";  shift 2 ;;
+    --output-dir)  OUTPUT_DIR="$2";     shift 2 ;;
     *) echo "[ERROR] Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -115,24 +117,30 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 # BASE MODEL
 # ============================================================
 if [ "${MODE}" = "base" ]; then
+  # Extract scale part (remove "S" prefix and any "_dt*" suffix from validation suite)
+  # e.g., "S1e5" → "1e5", or "S1e5_dt24h" → "1e5"
+  SCALE_ONLY="${SCALE#S}"  # Remove "S" prefix
+  SCALE_ONLY="${SCALE_ONLY%_*}"  # Remove "_dt*" suffix if present
+
   # Select config file
-  if [ "${SCALE}" = "S1e5" ]; then
+  if [ "${SCALE_ONLY}" = "1e5" ]; then
     CONFIG="${REPO_ROOT}/configs/params.json"
   else
-    CONFIG="${REPO_ROOT}/configs/params_${SCALE}.json"
+    CONFIG="${REPO_ROOT}/configs/params_S${SCALE_ONLY}.json"
   fi
 
   # Auto-generate rescaled params if missing
   if [ ! -f "${CONFIG}" ]; then
     echo "[INFO] ${CONFIG} not found — generating via rescale_params.py..."
-    S_NUM="${SCALE#S}"   # e.g. S1e4 → 1e4
     ${PYTHON} "${REPO_ROOT}/scripts/rescale_params.py" \
-      "${REPO_ROOT}/configs/params.json" "${S_NUM}" "${CONFIG}"
+      "${REPO_ROOT}/configs/params.json" "${SCALE_ONLY}" "${CONFIG}"
   fi
 
-  # Write directly into runs/base/ with name format TIMESTAMP_SCALE_sSEED
-  RUN_ID="${TIMESTAMP}_${SCALE}_s${SEED}"
-  OUTPUT_DIR="${REPO_ROOT}/runs/base/${RUN_ID}"
+  # Use provided OUTPUT_DIR if available (from validation suite), otherwise generate default
+  if [ -z "${OUTPUT_DIR}" ]; then
+    RUN_ID="${TIMESTAMP}_${SCALE}_s${SEED}"
+    OUTPUT_DIR="${REPO_ROOT}/runs/base/${RUN_ID}"
+  fi
   mkdir -p "${OUTPUT_DIR}"
 
   echo "[2/2] Running base model  (scale=${SCALE}  seed=${SEED}  threads=${THREADS})"
@@ -142,12 +150,30 @@ if [ "${MODE}" = "base" ]; then
   TMP_CFG=$(mktemp /tmp/bdm_cfg_XXXXXX.json)
   ${PYTHON} -c "
 import json
+from pathlib import Path
+
+# Load base config
 cfg = json.load(open('${CONFIG}'))
 cfg['output_dir'] = '${OUTPUT_DIR}'
+
+# Load run's params.json if it exists (created by validation suite)
+run_params = Path('${OUTPUT_DIR}') / 'params.json'
+if run_params.exists():
+    run_cfg = json.load(open(run_params))
+    # Use dt_hr from run params if available
+    if 'dt_hr' in run_cfg:
+        cfg['dt_minutes'] = float(run_cfg['dt_hr']) * 60.0
+    # Copy other important fields from run params
+    for key in ['scale_S', 'seed', 'dt_hr', 'random_seed']:
+        if key in run_cfg:
+            cfg[key] = run_cfg[key]
+
 if '${SEED_OVERRIDE}':
     cfg['seed'] = int('${SEED_OVERRIDE}')
+
 json.dump(cfg, open('${TMP_CFG}', 'w'), indent=2)
 "
+
   START=$(date +%s)
   BDM_PARAMS="${TMP_CFG}" "${BINARY}"
   END=$(date +%s)
