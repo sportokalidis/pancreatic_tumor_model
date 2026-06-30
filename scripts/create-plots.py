@@ -74,17 +74,26 @@ def load_ode(path: Path) -> pd.DataFrame:
 
 def load_paper_ref(data_dir: Path, scale_s: float = 1e5) -> dict[str, pd.DataFrame]:
     """
-    Load per-population paper reference CSVs (no header, col0=day, col1=count).
-    Paper references are at S=1e5; scale them to match ABM's scale_S.
+    Load per-population paper reference CSVs from data_dir/digitized/.
+
+    Digitized references are pre-scaled for each S value, no additional scaling needed.
     """
     refs = {}
-    scale_factor = scale_s / 1e5  # Paper refs are always S=1e5
+
+    # Format scale string (e.g., S1e4)
+    scale_str = f"S{scale_s:.0e}".replace("+0", "").replace("e", "e")
+
+    # Digitized references in data_dir/digitized/, already scaled to target S
+    digitized_dir = data_dir / "digitized"
+
     for pop in POPS:
-        csv = data_dir / f"{pop}-Cells_scaled_global.csv"
-        if csv.exists():
-            df = pd.read_csv(csv, header=None, names=["day", "count"])
-            df["count"] = df["count"] * scale_factor
+        digitized_csv = digitized_dir / f"{pop}-Cells-{scale_str}.csv"
+        if digitized_csv.exists():
+            df = pd.read_csv(digitized_csv, header=None, names=["day", "count"])
             refs[pop] = df
+
+    return refs
+
     return refs
 
 

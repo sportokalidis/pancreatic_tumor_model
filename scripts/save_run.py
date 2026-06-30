@@ -225,15 +225,18 @@ def main():
         print("  [WARN] ODE reference failed — skipping")
 
     # -----------------------------------------------------------------------
-    # 4. Fit metrics vs paper reference
+    # 4. Fit metrics (ABM vs ODE reference — same scale/params)
     # -----------------------------------------------------------------------
     print("\n[2/3] Computing fit metrics...")
-    ok = run_subprocess([
-        PYTHON, str(ERR_SCRIPT),
-        "--sim",  str(run_dir / "populations.csv"),
-        "--refs", str(refs_dir),
-        "--out",  str(run_dir),
-    ], "metrics")
+    ode_csv = run_dir / "ode_reference.csv"
+    metrics_cmd = [PYTHON, str(ERR_SCRIPT), "--sim", str(run_dir / "populations.csv"), "--out", str(run_dir)]
+    # Use ODE reference if available (proper validation, same scale/params)
+    if ode_csv.exists():
+        metrics_cmd.extend(["--ode-csv", str(ode_csv)])
+    else:
+        # Fallback to paper reference (legacy)
+        metrics_cmd.extend(["--refs", str(refs_dir)])
+    ok = run_subprocess(metrics_cmd, "metrics")
     if not ok:
         print("  [WARN] Fit metrics failed — skipping")
 
