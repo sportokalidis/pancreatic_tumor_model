@@ -25,10 +25,12 @@
 #SBATCH --cpus-per-task=24
 #SBATCH --mem=46G
 #SBATCH --time=01:00:00
-#SBATCH --partition=cpu-st
-# Partition: cpu-st (longcpu was down for HW maintenance 2026-06 — cn0012/cn0014
-# draining; switch back with `sbatch --partition=longcpu` or PARTITION= once it
-# returns). Override via the PARTITION env var in submit_sensitivity.sh.
+#SBATCH --partition=longcpu
+# Partition: longcpu by default (keeps the busy cpu partition free). Override via
+# the PARTITION env var in submit_sensitivity.sh or `sbatch --partition=...`.
+# NOTE (2026-06-30): for account d2026d06-040-users, cpu-st/cpu-sb are NOT
+# permitted (AllowAccounts restricted) and longcpu/largemem/xlong were down or
+# reserved for maintenance — so use `PARTITION=cpu` while longcpu is unavailable.
 # Memory: baseline S=1e4 dt=24h uses ~27 GB; SA perturbs growth/capacity params
 # up to 2x, so high-growth samples need more headroom (~40 GB). 46G/24 cores =
 # 1962 MB/core stays under the cluster's 2048 MB/core policy cap (32G/16=2048
@@ -42,10 +44,12 @@
 
 set -euo pipefail
 
-# Ensure module system is available on the compute node
+# Ensure module system is available on the compute node. lmod's init can return
+# non-zero and reference unset vars, which would trip `set -euo pipefail`, so
+# disable errexit/nounset around the source (env.sh does the same for thisbdm).
 for _m in /etc/profile.d/modules.sh /usr/share/Modules/init/bash \
           /opt/modules/init/bash /usr/local/Modules/init/bash; do
-  [ -f "${_m}" ] && { source "${_m}" 2>/dev/null; break; }
+  if [ -f "${_m}" ]; then set +eu; source "${_m}" >/dev/null 2>&1; set -eu; break; fi
 done
 
 REPO_ROOT="${REPO_ROOT:-${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)}}"
@@ -96,6 +100,9 @@ START=$(date +%s)
   --env "OMP_NUM_THREADS=${THREADS}" \
   --env "OMP_PROC_BIND=true" \
   "${SIF}" \
-  /bin/bash -c "cd '${REPO_ROOT}' && '${BINARY}'"
+  /bin/bash -c "cd '${REPO_ROOT}' && source scripts/hpc/env.sh && '${BINARY}'"
+# env.sh sources thisbdm.sh — required because --cleanenv strips ROOTSYS /
+# LD_LIBRARY_PATH, without which the binary aborts ('BioDynaMo environment not
+# set up correctly'). This mirrors run_direct.sh, which sources env.sh first.
 END=$(date +%s)
 echo "  done in $(( END - START ))s"
