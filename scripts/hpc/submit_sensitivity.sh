@@ -16,7 +16,7 @@
 # Env vars:
 #   BDM_SIF        Singularity image (default: /ceph/hpc/home/eustavrosp/biodynamo/Singularity.sif)
 #   PYTHON         container python (default: /opt/.pyenv/versions/3.9.1/bin/python3)
-#   PARTITION      SLURM partition (default: longcpu — keeps the busy cpu partition free)
+#   PARTITION      SLURM partition (default: cpu-st — longcpu was down for HW maint.)
 #   MAX_CONCURRENT cap simultaneous array tasks, e.g. 30 (default: unset = no cap)
 #   NO_SUBMIT      set to 1 to only generate configs (skip sbatch)
 # ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ N_SAMPLES="${2:-250}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 SIF="${BDM_SIF:-/ceph/hpc/home/eustavrosp/biodynamo/Singularity.sif}"
 PYTHON="${PYTHON:-/opt/.pyenv/versions/3.9.1/bin/python3}"
-PARTITION="${PARTITION:-longcpu}"
+PARTITION="${PARTITION:-cpu-st}"
 [ -e "${SIF}" ] || { echo "[ERROR] SIF not found: ${SIF}" >&2; exit 1; }
 
 STAMP="$(date +%Y%m%d_%H%M%S)"

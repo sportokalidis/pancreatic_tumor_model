@@ -25,11 +25,14 @@
 #SBATCH --cpus-per-task=24
 #SBATCH --mem=46G
 #SBATCH --time=01:00:00
-#SBATCH --partition=longcpu
+#SBATCH --partition=cpu-st
+# Partition: cpu-st (longcpu was down for HW maintenance 2026-06 — cn0012/cn0014
+# draining; switch back with `sbatch --partition=longcpu` or PARTITION= once it
+# returns). Override via the PARTITION env var in submit_sensitivity.sh.
 # Memory: baseline S=1e4 dt=24h uses ~27 GB; SA perturbs growth/capacity params
 # up to 2x, so high-growth samples need more headroom (~40 GB). 46G/24 cores =
 # 1962 MB/core stays under the cluster's 2048 MB/core policy cap (32G/16=2048
-# tripped it). longcpu nodes have 256 cores / ~251 GB, so 24-core tasks pack fine.
+# tripped it). cpu/cpu-st nodes are 256 cores / ~251 GB, so 24-core tasks pack fine.
 #SBATCH --output=logs/slurm-sens-%A_%a.out
 #SBATCH --error=logs/slurm-sens-%A_%a.err
 #SBATCH --export=ALL
