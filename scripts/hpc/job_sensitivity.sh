@@ -22,10 +22,14 @@
 # ---------------------------------------------------------------------------
 #SBATCH --job-name=bdm-sens
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=32G
+#SBATCH --cpus-per-task=24
+#SBATCH --mem=46G
 #SBATCH --time=01:00:00
 #SBATCH --partition=longcpu
+# Memory: baseline S=1e4 dt=24h uses ~27 GB; SA perturbs growth/capacity params
+# up to 2x, so high-growth samples need more headroom (~40 GB). 46G/24 cores =
+# 1962 MB/core stays under the cluster's 2048 MB/core policy cap (32G/16=2048
+# tripped it). longcpu nodes have 256 cores / ~251 GB, so 24-core tasks pack fine.
 #SBATCH --output=logs/slurm-sens-%A_%a.out
 #SBATCH --error=logs/slurm-sens-%A_%a.err
 #SBATCH --export=ALL
