@@ -98,7 +98,7 @@ def main() -> int:
                 continue
             sub["abs"] = sub["elasticity"].abs()
             sub = sub.sort_values("abs")
-            labels = [f"{p}\n({sym})" if sym else p
+            labels = [f"{sym}\n({p})" if sym else p
                       for p, sym in zip(sub["param"], sub["paper_symbol"])]
             colors = ["#c0392b" if v > 0 else "#2980b9" for v in sub["elasticity"]]
             fig, ax = plt.subplots(figsize=(8, max(4, 0.32 * len(sub))))

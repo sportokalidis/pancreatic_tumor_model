@@ -30,7 +30,8 @@ PLOT_OUTPUTS = ["C", "E"]
 
 
 def _label(param: str, sym) -> str:
-    return f"{param} ({sym})" if isinstance(sym, str) and sym else param
+    # Paper symbol primary (reads like Fig. 3), ABM name in parentheses.
+    return f"{sym} ({param})" if isinstance(sym, str) and sym else param
 
 
 def main() -> int:
