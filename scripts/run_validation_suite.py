@@ -101,10 +101,17 @@ def submit_job(seed: int, scale: float, dt_hr: float, suite_dir: Path, repo_root
     create_param_file(seed, scale, dt_hr, run_dir)
 
     # Submit job with explicit output directory
+    # Allocate time based on scale: S=1e3 needs longer runtime
+    if scale == 1e3:
+        time_limit = "48:00:00"  # 48 hours for S=1e3 (finer resolution)
+    else:
+        time_limit = "04:00:00"  # 4 hours for S=1e4, S=1e5
+
     cmd = [
         "sbatch",
         "--partition=cpu",
         "--mem=30G",
+        f"--time={time_limit}",
         "--job-name", job_name,
         "--export", f"ALL,REPO_ROOT={repo_root},SCALE={s_str}_{dt_str},SEED={seed},SKIP_BUILD=true,OUTPUT_DIR={run_dir}",
         "scripts/hpc/job_base.sh"
