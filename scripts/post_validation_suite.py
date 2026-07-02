@@ -144,19 +144,19 @@ def compute_convergence_plots(suite_dir: Path):
         # ODE reference (dotted line) — theoretical solution
         if pop in df_ode:
             ode = df_ode[pop]
-            ax.plot(ode["days"], ode[pop], color=color, linewidth=2.0,
+            ax.plot(ode["days"], ode[pop], color=color, linewidth=3.0,
                     linestyle=":", label="ODE reference (theory)", zorder=5, alpha=0.8)
 
-        # Paper reference (solid line)
-        if pop in df_ref:
-            ref = df_ref[pop]
-            ax.plot(ref["days"], ref[pop], color=color, linewidth=2.5,
-                    linestyle="-", label="Paper ref. (digitized)", zorder=4)
+        # Paper reference (solid line) — DISABLED
+        # if pop in df_ref:
+        #     ref = df_ref[pop]
+        #     ax.plot(ref["days"], ref[pop], color=color, linewidth=2.5,
+        #             linestyle="-", label="Paper ref. (digitized)", zorder=4)
 
         # Mean ± std (shaded region)
         ax.fill_between(days, means[pop] - stds[pop], means[pop] + stds[pop],
                         color=color, alpha=0.3, label="ABM mean±std", zorder=2)
-        ax.plot(days, means[pop], color=color, linewidth=2.0, linestyle="--",
+        ax.plot(days, means[pop], color=color, linewidth=1.0, linestyle="--",
                 label="ABM mean", zorder=3)
 
         ax.set_xlabel("Day")
@@ -184,7 +184,7 @@ def compute_convergence_plots(suite_dir: Path):
 
     fig.suptitle(
         f"Stochastic Convergence Validation ({len(dfs)} seeds)\n"
-        "Shaded region: ±1 std; Dashed: ABM mean; Solid: Paper reference (digitized)",
+        "Shaded region: ±1 std; Dashed: ABM mean; Dotted: ODE reference",
         fontsize=13
     )
     plt.tight_layout()
@@ -220,7 +220,7 @@ def compute_convergence_plots(suite_dir: Path):
 
     fig.suptitle(
         f"Stochastic Convergence Validation — Logarithmic Scale ({len(dfs)} seeds)\n"
-        "Shaded region: ±1 std; Dashed: ABM mean; Solid: Paper reference (digitized)",
+        "Shaded region: ±1 std; Dashed: ABM mean; Dotted: ODE reference",
         fontsize=13
     )
     plt.tight_layout()
@@ -246,7 +246,7 @@ def compute_convergence_plots(suite_dir: Path):
 
     fig.suptitle(
         f"Stochastic Convergence Validation — Combined View ({len(dfs)} seeds)\n"
-        "Shaded region: ±1 std; Dashed: ABM mean; Solid: Paper reference (digitized)",
+        "Shaded region: ±1 std; Dashed: ABM mean; Dotted: ODE reference",
         fontsize=13
     )
     plt.tight_layout()
@@ -267,7 +267,7 @@ def compute_convergence_plots(suite_dir: Path):
         # ODE reference (dotted line)
         if pop in df_ode:
             ode = df_ode[pop]
-            ax.plot(ode["days"], ode[pop], color=color, linewidth=2.0,
+            ax.plot(ode["days"], ode[pop], color=color, linewidth=3.0,
                     linestyle=":", alpha=0.7, zorder=4)
 
         # Paper reference (solid line)
@@ -279,7 +279,7 @@ def compute_convergence_plots(suite_dir: Path):
         # Mean ± std (shaded region)
         ax.fill_between(days, means[pop] - stds[pop], means[pop] + stds[pop],
                         color=color, alpha=0.15, zorder=2)
-        ax.plot(days, means[pop], color=color, linewidth=2.2, linestyle="--",
+        ax.plot(days, means[pop], color=color, linewidth=1.0, linestyle="--",
                 label=labels[pop], zorder=3)
 
     ax.set_xlabel("Day", fontsize=12)
@@ -303,7 +303,7 @@ def compute_convergence_plots(suite_dir: Path):
         # ODE reference (dotted line)
         if pop in df_ode:
             ode = df_ode[pop]
-            ax.plot(ode["days"], ode[pop], color=color, linewidth=2.0,
+            ax.plot(ode["days"], ode[pop], color=color, linewidth=3.0,
                     linestyle=":", alpha=0.7, zorder=4)
 
         # Paper reference (solid line)
@@ -315,7 +315,7 @@ def compute_convergence_plots(suite_dir: Path):
         # Mean ± std (shaded region)
         ax.fill_between(days, means[pop] - stds[pop], means[pop] + stds[pop],
                         color=color, alpha=0.15, zorder=2)
-        ax.plot(days, means[pop], color=color, linewidth=2.2, linestyle="--",
+        ax.plot(days, means[pop], color=color, linewidth=1.0, linestyle="--",
                 label=labels[pop], zorder=3)
 
     ax.set_xlabel("Day", fontsize=12)
@@ -327,6 +327,102 @@ def compute_convergence_plots(suite_dir: Path):
 
     plt.tight_layout()
     out_path = suite_dir / "validation_all_types_log.png"
+    plt.savefig(out_path, dpi=200, bbox_inches="tight")
+    print(f"  ✓ Plot saved: {out_path}")
+    plt.close(fig)
+
+    # 7. Min-max envelope with mean (linear scale)
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    axes = axes.flatten()
+
+    for ax, pop in zip(axes, pops):
+        color = colors[pop]
+
+        # Min-Max envelope
+        mins = np.min([df[pop].values for df in dfs], axis=0)
+        maxs = np.max([df[pop].values for df in dfs], axis=0)
+        ax.fill_between(days, mins, maxs, color=color, alpha=0.25,
+                        label="Min-Max range", zorder=2)
+
+        # ODE reference (dotted line)
+        if pop in df_ode:
+            ode = df_ode[pop]
+            ax.plot(ode["days"], ode[pop], color=color, linewidth=2.0,
+                    linestyle=":", label="ODE reference", zorder=5, alpha=0.8)
+
+        # Paper reference (solid line) — DISABLED
+        # if pop in df_ref:
+        #     ref = df_ref[pop]
+        #     ax.plot(ref["days"], ref[pop], color=color, linewidth=2.5,
+        #             linestyle="-", label="Paper ref. (digitized)", zorder=4)
+
+        # Mean line
+        ax.plot(days, means[pop], color=color, linewidth=2.5, linestyle="--",
+                label="ABM mean", zorder=3)
+
+        ax.set_xlabel("Day")
+        ax.set_ylabel("Cell count")
+        ax.set_title(labels[pop])
+        ax.legend(loc="best", fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+        # Auto-log if needed
+        all_vals = list(means[pop])
+        all_vals.extend(mins)
+        all_vals.extend(maxs)
+        if pop in df_ref:
+            all_vals.extend(df_ref[pop][pop].tolist())
+        positive = [v for v in all_vals if v > 0]
+        if positive and max(positive) / max(min(positive), 1) > 100:
+            ax.set_yscale("log")
+
+    fig.suptitle(
+        f"Min-Max Envelope + ABM Mean ({len(dfs)} seeds)\n"
+        "Shaded: min-max range across all runs; Dashed: ABM mean",
+        fontsize=13
+    )
+    plt.tight_layout()
+
+    out_path = suite_dir / "validation_all_runs_minmax.png"
+    plt.savefig(out_path, dpi=200, bbox_inches="tight")
+    print(f"  ✓ Plot saved: {out_path}")
+    plt.close(fig)
+
+    # 8. All cell types on same axis with min-max envelope (linear scale)
+    fig, ax = plt.subplots(figsize=(14, 8))
+
+    for pop in pops:
+        color = colors[pop]
+
+        # Min-Max envelope
+        mins = np.min([df[pop].values for df in dfs], axis=0)
+        maxs = np.max([df[pop].values for df in dfs], axis=0)
+        ax.fill_between(days, mins, maxs, color=color, alpha=0.2, zorder=2)
+
+        # ODE reference (dotted line)
+        if pop in df_ode:
+            ode = df_ode[pop]
+            ax.plot(ode["days"], ode[pop], color=color, linewidth=3.0,
+                    linestyle=":", alpha=0.7, zorder=4)
+
+        # Paper reference (solid line)
+        if pop in df_ref:
+            ref = df_ref[pop]
+            ax.plot(ref["days"], ref[pop], color=color, linewidth=2.5,
+                    linestyle="-", alpha=0.7, zorder=4.5)
+
+        # Mean line
+        ax.plot(days, means[pop], color=color, linewidth=1.0, linestyle="--",
+                label=labels[pop], zorder=3)
+
+    ax.set_xlabel("Day", fontsize=12)
+    ax.set_ylabel("Cell count", fontsize=12)
+    ax.set_title(f"All Cell Types — Min-Max Envelope + Mean ({len(dfs)} seeds)", fontsize=14)
+    ax.legend(loc="best", fontsize=11, ncol=3)
+    ax.grid(True, alpha=0.3, which="both")
+
+    plt.tight_layout()
+    out_path = suite_dir / "validation_all_runs_combined.png"
     plt.savefig(out_path, dpi=200, bbox_inches="tight")
     print(f"  ✓ Plot saved: {out_path}")
     plt.close(fig)

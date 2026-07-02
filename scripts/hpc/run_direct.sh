@@ -163,8 +163,8 @@ if run_params.exists():
     # Use dt_hr from run params if available
     if 'dt_hr' in run_cfg:
         cfg['dt_minutes'] = float(run_cfg['dt_hr']) * 60.0
-    # Copy other important fields from run params
-    for key in ['scale_S', 'seed', 'dt_hr', 'random_seed']:
+    # Copy all important fields from run params (includes ICs: C0, P0, E0, N0, H0, R0)
+    for key in ['scale_S', 'seed', 'dt_hr', 'random_seed', 'C0', 'P0', 'E0', 'N0', 'H0', 'R0']:
         if key in run_cfg:
             cfg[key] = run_cfg[key]
 
