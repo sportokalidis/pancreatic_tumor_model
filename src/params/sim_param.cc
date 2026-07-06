@@ -149,6 +149,7 @@ void SimParam::LoadParams(const std::string& filename) {
   load_real("abr_c_immune",  abr_c_immune);
   load_real("acd47_end_day",  acd47_end_day);
   load_real("acd47_e_boost",  acd47_e_boost);
+  load_real("kc_post_treat",  kc_post_treat);
 
   // Cancer Stem Cell (Section 6) — optional, default off
   load_bool("csc_enable",     csc_enable);

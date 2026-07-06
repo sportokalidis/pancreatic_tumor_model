@@ -187,6 +187,11 @@ struct SimParam : public ParamGroup {
   real_t acd47_end_day  = 35.0;
   real_t acd47_e_boost  = 0.5;         // α·v_a_dose (tune vs Fig. 5)
 
+  // Post-treatment tumor growth rate (Paper Section 5, fitted per protocol,
+  // Fig. 5 titles). After the last treatment ends, k_c switches to this value
+  // (slower recovery → different final C per protocol). <=0 disables (base rate).
+  real_t kc_post_treat  = 0.0;
+
   // --------------------------------------------------------------------------
   // Cancer Stem Cell (Paper Section 6, Eqs. 6.1 & 6.7) — OPTIONAL, default OFF.
   // dS/dt = λ(C)·(a1-a3)·S - δ_S·S                                (Eq. 6.7)

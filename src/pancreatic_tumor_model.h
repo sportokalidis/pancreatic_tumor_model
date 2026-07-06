@@ -351,8 +351,33 @@ struct DrugState {
   real_t M_gem = 0.0;
   real_t M_abr = 0.0;
   bool   acd47_active = false;
+  // True once the step is past the last active treatment's end day — triggers
+  // the paper's post-treatment reduced growth rate kc_post_treat (Section 5).
+  bool   post_treatment = false;
+  // Step-averaged kill fraction (1-e^{-M}) over the timestep (see AvgKillFrac).
+  // Behaviors use these instead of (1-e^{-M}) at the frozen peak — otherwise a
+  // fast-decaying drug (gemcitabine, t½=3h) is grossly over-applied when dt is
+  // not << t½ (dt=24h → ~5.6x over-kill → tumor crashes vs paper Fig. 5).
+  real_t gem_kill_frac = 0.0;
+  real_t abr_kill_frac = 0.0;
 
   static DrugState& Instance() { static DrugState ds; return ds; }
+
+  // Time-averaged (1-e^{-M}) over one step, integrating the within-step decay
+  // M(τ)=M0·e^{-γτ}. Midpoint quadrature (N=16) — matches the continuous kill
+  // integral the ODE reference already uses, making the delivered dose per
+  // injection dt-independent.
+  static real_t AvgKillFrac(real_t M0, real_t gamma, real_t dt) {
+    if (M0 <= 0.0) return 0.0;
+    if (gamma <= 0.0 || dt <= 0.0) return 1.0 - std::exp(-M0);
+    constexpr int N = 16;
+    real_t sum = 0.0;
+    for (int i = 0; i < N; ++i) {
+      const real_t tau = (i + 0.5) * dt / N;
+      sum += 1.0 - std::exp(-M0 * std::exp(-gamma * tau));
+    }
+    return sum / N;
+  }
 
   void RefreshIfNeeded() {
     auto* sim   = Simulation::GetActive();
@@ -400,6 +425,17 @@ struct DrugState {
     acd47_active = sp->treat_acd47
                 && step >= s_of(sp->treat_start_day)
                 && step <= s_of(sp->acd47_end_day);
+
+    // Post-treatment begins after the LAST active treatment's end day.
+    real_t last_end = 0.0;
+    if (sp->treat_gem)   last_end = std::max(last_end, sp->gem_end_day);
+    if (sp->treat_abr)   last_end = std::max(last_end, sp->abr_end_day);
+    if (sp->treat_acd47) last_end = std::max(last_end, sp->acd47_end_day);
+    post_treatment = (last_end > 0.0) && (step > s_of(last_end));
+
+    // Step-averaged kill fractions (resolves fast PK independent of dt).
+    gem_kill_frac = AvgKillFrac(M_gem, sp->gem_gamma, dt_day);
+    abr_kill_frac = AvgKillFrac(M_abr, sp->abr_gamma, dt_day);
 
     step_cached.store(step, std::memory_order_release);
   }
@@ -467,6 +503,9 @@ class TumorBehavior : public Behavior {
     const real_t dt_day = sp->dt_minutes / 1440.0;
     const EffCounts cnt(GetCounts(*c), DensityCompensation());
 
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+
     // --- Division (Eq. 2.1 growth terms) ---
     // (k_c + mu_c·P)·C·(1-C/K_C): mu_c·P is LINEAR in P (not Hill)
     // Crowding uses global C — K_C is a systemic resource/space constraint.
@@ -475,8 +514,12 @@ class TumorBehavior : public Behavior {
     const real_t C_global_crowd = sp->use_local_counts
         ? static_cast<real_t>(GetGlobalCounts().C) : cnt.C;
     real_t crowd  = 1.0 - Clamp(C_global_crowd / sp->K_C, 0.0, 1.0);
-    real_t boostP = sp->c_boost_from_P * cnt.P;  // mu_c·P
-    real_t div_rate = (sp->c_base_div + boostP) * crowd;
+    real_t boostP = sp->c_boost_from_P * cnt.P;  // mu_c·P (kept, per Eq. 5.1)
+    // Paper Section 5 fits a REDUCED k_c after treatment ends (Fig. 5 titles).
+    // Per Eq. 5.1 only k_c changes; the mu_c·P boost is retained.
+    const real_t k_c = (ds.post_treatment && sp->kc_post_treat > 0.0)
+                     ? sp->kc_post_treat : sp->c_base_div;
+    real_t div_rate = (k_c + boostP) * crowd;
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       c->Divide();
@@ -497,10 +540,8 @@ class TumorBehavior : public Behavior {
     real_t killN = sp->c_kill_by_N * cnt.N;
 
     // --- Drug kill (Eq. 5.1): c_c·(1−e^{−M}) — 0 when treatment disabled ---
-    auto& ds = DrugState::Instance();
-    ds.RefreshIfNeeded();
-    real_t drug_kill = sp->gem_c_c * (1.0 - std::exp(-ds.M_gem))
-                     + sp->abr_c_c * (1.0 - std::exp(-ds.M_abr));
+    real_t drug_kill = sp->gem_c_c * ds.gem_kill_frac
+                     + sp->abr_c_c * ds.abr_kill_frac;
 
     if (rng->Uniform(0, 1) < ProbFromRate(killE + killN + drug_kill, dt_day)) {
       ctxt->RemoveAgent(c->GetUid());
@@ -526,8 +567,8 @@ class PSCBehavior : public Behavior {
     // --- Death (lambda_p*P + drug kill Eq. 5.1) — checked independently ---
     auto& ds = DrugState::Instance();
     ds.RefreshIfNeeded();
-    real_t drug_kill = sp->gem_c_p * (1.0 - std::exp(-ds.M_gem))
-                     + sp->abr_c_p * (1.0 - std::exp(-ds.M_abr));
+    real_t drug_kill = sp->gem_c_p * ds.gem_kill_frac
+                     + sp->abr_c_p * ds.abr_kill_frac;
     if (rng->Uniform(0, 1) < ProbFromRate(sp->p_base_death + drug_kill, dt_day)) {
       ctxt->RemoveAgent(psc->GetUid());
       return;
@@ -578,8 +619,8 @@ class EffectorBehavior : public Behavior {
         ? static_cast<real_t>(GetGlobalCounts().R) : cnt.R;
     auto& ds = DrugState::Instance();
     ds.RefreshIfNeeded();
-    real_t drug_kill = sp->gem_c_immune * (1.0 - std::exp(-ds.M_gem))
-                     + sp->abr_c_immune * (1.0 - std::exp(-ds.M_abr));
+    real_t drug_kill = sp->gem_c_immune * ds.gem_kill_frac
+                     + sp->abr_c_immune * ds.abr_kill_frac;
     real_t die = sp->e_base_death
                + sp->e_inact_by_C * cnt.C       // c_e·C (local)
                + sp->e_suppr_by_R * R_global_e  // δ_e·R (global)
@@ -631,8 +672,8 @@ class NKBehavior : public Behavior {
         ? static_cast<real_t>(GetGlobalCounts().R) : cnt.R;
     auto& ds = DrugState::Instance();
     ds.RefreshIfNeeded();
-    real_t drug_kill = sp->gem_c_immune * (1.0 - std::exp(-ds.M_gem))
-                     + sp->abr_c_immune * (1.0 - std::exp(-ds.M_abr));
+    real_t drug_kill = sp->gem_c_immune * ds.gem_kill_frac
+                     + sp->abr_c_immune * ds.abr_kill_frac;
     real_t die = sp->n_base_death
                + sp->n_inact_by_C * cnt.C       // c_n·C (local, direct contact)
                + sp->n_suppr_by_R * R_global_n  // δ_n·R (global, cytokine)
@@ -682,8 +723,8 @@ class HelperBehavior : public Behavior {
         ? static_cast<real_t>(GetGlobalCounts().R) : cnt.R;
     auto& ds = DrugState::Instance();
     ds.RefreshIfNeeded();
-    real_t drug_kill = sp->gem_c_immune * (1.0 - std::exp(-ds.M_gem))
-                     + sp->abr_c_immune * (1.0 - std::exp(-ds.M_abr));
+    real_t drug_kill = sp->gem_c_immune * ds.gem_kill_frac
+                     + sp->abr_c_immune * ds.abr_kill_frac;
     real_t die = sp->h_base_death
                + sp->h_suppr_by_R * R_global_h  // δ_h·R (global, cytokine)
                + drug_kill;                      // Eq. 5.1 (0 if no treatment)
@@ -731,8 +772,8 @@ class TRegBehavior : public Behavior {
     // r·N is bilinear in N.
     auto& ds = DrugState::Instance();
     ds.RefreshIfNeeded();
-    real_t drug_kill = sp->gem_c_immune * (1.0 - std::exp(-ds.M_gem))
-                     + sp->abr_c_immune * (1.0 - std::exp(-ds.M_abr));
+    real_t drug_kill = sp->gem_c_immune * ds.gem_kill_frac
+                     + sp->abr_c_immune * ds.abr_kill_frac;
     real_t die = sp->r_decay
                + sp->r_cleared_by_N * cnt.N  // r·N (bilinear)
                + drug_kill;                   // Eq. 5.1 (0 if no treatment)
@@ -1057,14 +1098,15 @@ inline int Simulate(int argc, const char** argv) {
     r->AddBehavior(new TRegBehavior());
     ctxt->AddAgent(r);
   }
-  // Cancer Stem Cells (Section 6) — only seeded when enabled; co-located with tumor.
-  if (sp->csc_enable) {
-    for (size_t i = 0; i < sp->S0; ++i) {
-      auto* s = new CancerStemCell(pos_tumor());
-      s->AddBehavior(new CSCBehavior());
-      ctxt->AddAgent(s);
-    }
-  }
+  // Cancer Stem Cells (Section 6) — DISABLED: this build reproduces only the
+  // Section-5 treatment model. Commented out (not deleted) so CSC can be restored.
+  // if (sp->csc_enable) {
+  //   for (size_t i = 0; i < sp->S0; ++i) {
+  //     auto* s = new CancerStemCell(pos_tumor());
+  //     s->AddBehavior(new CSCBehavior());
+  //     ctxt->AddAgent(s);
+  //   }
+  // }
 
   // Reporter + constant source (invisible agent; not using AlwaysCopyToNew)
   auto* rep = new ReporterCell();
