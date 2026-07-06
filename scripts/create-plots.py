@@ -280,6 +280,10 @@ def main():
                         help="Output directory for figures")
     parser.add_argument("--scale-s", type=float, default=None,
                         help="Scale factor (auto-detected from params.json if not provided)")
+    parser.add_argument("--no-paper-ref", action="store_true",
+                        help="Do not overlay the digitized paper (Fig. 2) reference. "
+                             "Auto-enabled for treatment/CSC runs, where the base "
+                             "Fig. 2 curves are not a valid comparison.")
     args = parser.parse_args()
 
     out_dir = Path(args.out)
@@ -300,22 +304,32 @@ def main():
 
     # Auto-detect scale_S from params.json if not provided
     scale_s = args.scale_s or 1e5
+    is_treatment = False
     params_file = abm_path.parent / "params.json"
     if params_file.exists():
         try:
             with open(params_file) as f:
                 params = json.load(f)
                 scale_s = params.get("scale_S", scale_s)
+                # Base-model Fig. 2 paper curves are not a valid reference for
+                # treatment/CSC runs — suppress them automatically.
+                is_treatment = bool(params.get("treat_gem") or params.get("treat_abr")
+                                    or params.get("treat_acd47") or params.get("csc_enable"))
         except:
             pass
 
     df_abm = load_abm(abm_path)
     df_ode = load_ode(ode_path)
-    paper_refs = load_paper_ref(Path(args.refs), scale_s=scale_s)
+    if args.no_paper_ref or is_treatment:
+        paper_refs = {}
+        why = "flag" if args.no_paper_ref else "treatment/CSC run"
+        print(f"Paper reference: disabled ({why}) — comparing ABM vs ODE only")
+    else:
+        paper_refs = load_paper_ref(Path(args.refs), scale_s=scale_s)
+        print(f"Paper refs loaded: {sorted(paper_refs.keys())}")
 
     print(f"ABM:   {len(df_abm)} rows, days {df_abm['days'].iloc[0]:.0f}–{df_abm['days'].iloc[-1]:.0f}")
     print(f"ODE:   {len(df_ode)} rows, days {df_ode['days'].iloc[0]:.0f}–{df_ode['days'].iloc[-1]:.0f}")
-    print(f"Paper refs loaded: {sorted(paper_refs.keys())}")
 
     plot_grid(df_abm, df_ode, paper_refs, out_dir / "comparison_grid.png")
     plot_combined(df_abm, df_ode, paper_refs, out_dir / "comparison_combined.png")

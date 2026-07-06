@@ -2,10 +2,13 @@
 # ---------------------------------------------------------------------------
 # run_direct.sh — run the ABM WITHOUT SLURM (Apptainer / interactive node).
 #
-# Two modes:
+# Modes:
 #   --base (default)   Single run of the base (no-treatment) model.
 #                      Uses params.json or params_S<scale>.json.
-#   --treatment        Run all 4 treatment protocols (treatment branch only).
+#   --treatment        Run all 4 treatment protocols (in one folder).
+#   --config-file P    Single production run of an arbitrary self-contained
+#                      config P (used by run_treatment_production.py for one
+#                      protocol × one seed). Archives like a base per-seed run.
 #
 # Usage:
 #   # Base model, default scale S=1e5
@@ -52,6 +55,7 @@ SKIP_BUILD=false
 NOTE="HPC direct run"
 SEED_OVERRIDE=""
 OUTPUT_DIR=""
+CONFIG_FILE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -64,6 +68,7 @@ while [[ $# -gt 0 ]]; do
     --note)        NOTE="$2";           shift 2 ;;
     --seed)        SEED_OVERRIDE="$2";  shift 2 ;;
     --output-dir)  OUTPUT_DIR="$2";     shift 2 ;;
+    --config-file) CONFIG_FILE="$2"; MODE="configfile"; shift 2 ;;
     *) echo "[ERROR] Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -112,6 +117,56 @@ export OMP_PROC_BIND=true
 SEED=$(${PYTHON} -c "import json; print(json.load(open('${REPO_ROOT}/configs/params.json')).get('seed',42))" 2>/dev/null || echo 42)
 [ -n "${SEED_OVERRIDE}" ] && SEED="${SEED_OVERRIDE}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+# ============================================================
+# CONFIG-FILE MODE  (single self-contained production run)
+# ============================================================
+# Runs one arbitrary config verbatim (all params — base + treatment + CSC —
+# come straight from the file, no scale/overlay logic). save_run.py auto-detects
+# the category (treatment when any treat_* flag is set) and picks the matching
+# ODE reference, so output archives identically to a base per-seed run.
+if [ "${MODE}" = "configfile" ]; then
+  [ -f "${CONFIG_FILE}" ] || { echo "[ERROR] Config not found: ${CONFIG_FILE}" >&2; exit 1; }
+  [ -n "${OUTPUT_DIR}" ]  || { echo "[ERROR] --config-file requires --output-dir" >&2; exit 1; }
+  mkdir -p "${OUTPUT_DIR}"
+
+  echo "[2/2] Running config-file mode  (threads=${THREADS}  seed=${SEED})"
+  echo "  Config: ${CONFIG_FILE}"
+  echo "  Output: ${OUTPUT_DIR}"
+
+  TMP_CFG=$(mktemp /tmp/bdm_cfg_XXXXXX.json)
+  ${PYTHON} -c "
+import json
+cfg = json.load(open('${CONFIG_FILE}'))
+cfg['output_dir'] = '${OUTPUT_DIR}'
+if '${SEED_OVERRIDE}':
+    cfg['seed'] = int('${SEED_OVERRIDE}')
+    cfg['random_seed'] = int('${SEED_OVERRIDE}')
+json.dump(cfg, open('${TMP_CFG}', 'w'), indent=2)
+"
+  START=$(date +%s)
+  BDM_PARAMS="${TMP_CFG}" "${BINARY}"
+  END=$(date +%s)
+  echo "  Done in $(( END - START ))s  -> ${OUTPUT_DIR}/populations.csv"
+
+  # Archive in place (save_run.py auto-detects treatment/csc/base category).
+  # Pass the effective (seed-patched) config so params.json reflects the run.
+  ${PYTHON} "${REPO_ROOT}/scripts/save_run.py" \
+    --params   "${TMP_CFG}" \
+    --abm      "${OUTPUT_DIR}/populations.csv" \
+    --refs     "${REPO_ROOT}/data-export" \
+    --run-dir  "${OUTPUT_DIR}" \
+    --duration "$(( END - START ))" \
+    --note     "${NOTE}"
+  rm -f "${TMP_CFG}"
+
+  echo ""
+  echo "================================================================"
+  echo "  Config-file run complete.  Seed: ${SEED}"
+  echo "  Output: ${OUTPUT_DIR}/populations.csv"
+  echo "================================================================"
+  exit 0
+fi
 
 # ============================================================
 # BASE MODEL

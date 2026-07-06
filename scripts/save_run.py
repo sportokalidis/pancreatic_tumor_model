@@ -245,13 +245,18 @@ def main():
     # -----------------------------------------------------------------------
     print("\n[3/3] Generating plots...")
     ode_csv = run_dir / "ode_reference.csv"
-    ok = run_subprocess([
+    plot_cmd = [
         PYTHON, str(PLT_SCRIPT),
         "--abm",  str(run_dir / "populations.csv"),
         "--ode",  str(ode_csv) if ode_csv.exists() else str(REFS_DIR / "ode_reference.csv"),
         "--refs", str(refs_dir),
         "--out",  str(run_dir),
-    ], "plots")
+    ]
+    # The digitized paper (Fig. 2) reference is the untreated base model — not a
+    # valid comparison for treatment/CSC runs, so suppress it there.
+    if category != "base":
+        plot_cmd.append("--no-paper-ref")
+    ok = run_subprocess(plot_cmd, "plots")
     if not ok:
         print("  [WARN] Plot generation failed — skipping")
 
