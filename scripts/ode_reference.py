@@ -84,9 +84,11 @@ def build_paper_params(S: float) -> dict:
         "K_P":      1.0 / (_a_p * S),
         "lambda_p": 7.83296e-10,
 
-        # ---- Effector E  (Eq. 2.3) ------------------------------------------
-        # r_e set to 0: PDF rendering fuses reference [47] with exponent,
-        # making the term 109× too large and pushing E above Fig. 2 y-axis.
+        # ---- Effector E  (Eq. 2.3 / 5.3) ------------------------------------
+        # r_e: Table 1 lists 1.1e-7, but that term (r_e*N*C) then dominates and
+        # makes E explode to ~1e6 (E far above the Fig.5 y-axis), crashing C.
+        # The tabulated value is inconsistent with the paper's figures, so we keep
+        # r_e=0 (as the figures require). See equation-figure gap.
         "a_e":     1.3e4 / S,
         "b_e":     2.7e-2,
         "c_e":     3.42e-10 * S,
@@ -123,10 +125,11 @@ def build_paper_params(S: float) -> dict:
         "r":       1e-11 * S,
 
         # ---- Beta parameters for immune stimulation (Table 1) ----------------
-        # Appear in f_hat term: f_e*(beta_E*E + beta_N*N + beta_H*H)*E, etc.
-        "beta_E":  4.4691e-13,  # (ng mL^-1 cell^-1)
-        "beta_N":  4.4691e-13,  # (ng mL^-1 cell^-1)
-        "beta_H":  4.4691e-13,  # (ng mL^-1 cell^-1)
+        # f_hat term: f_x*(beta_E*E + beta_N*N + beta_H*H)*X. beta is per-cell
+        # (ng mL^-1 cell^-1) → scale ×S for ABM agent counts.
+        "beta_E":  4.4691e-13 * S,
+        "beta_N":  4.4691e-13 * S,
+        "beta_H":  4.4691e-13 * S,
 
         # ---- Initial conditions (paper → ABM) -------------------------------
         "C0": round(4.886e7  / S),
@@ -287,7 +290,7 @@ def df_from_sol(sol) -> pd.DataFrame:
 # Drug pulses are applied by the piecewise solver; odes_treatment only sees the
 # continuous decay between injections.
 # ===========================================================================
-def odes_treatment(t, y, p, acd47_active=False):
+def odes_treatment(t, y, p, acd47_active=False, post_treat_start=None):
     C, P, E, N, H, R, M_gem, M_abr = [max(v, 0.0) for v in y]
 
     f_gem = 1.0 - np.exp(-M_gem)
@@ -296,7 +299,14 @@ def odes_treatment(t, y, p, acd47_active=False):
     drug_kill_P      = p.get("gem_c_p",      0.0) * f_gem + p.get("abr_c_p",      0.0) * f_abr
     drug_kill_immune = p.get("gem_c_immune", 0.0) * f_gem + p.get("abr_c_immune", 0.0) * f_abr
 
-    dC = ((p["k_c"] + p["mu_c"] * P) * C * (1.0 - C / p["K_C"])
+    # Paper Section 5 (Eq. 5.1): only k_c is refit after treatment ends (Fig. 5
+    # titles); the mu_c*P boost is retained.
+    k_c = p["k_c"]
+    if (post_treat_start is not None and t >= post_treat_start
+            and p.get("kc_post_treat", 0.0) > 0.0):
+        k_c = p["kc_post_treat"]
+
+    dC = ((k_c + p["mu_c"] * P) * C * (1.0 - C / p["K_C"])
           - p["b_c"] * N * C
           - p["d_c"] * E * C / (1.0 + p["r1"] * R)
           - drug_kill_C * C)
@@ -304,13 +314,20 @@ def odes_treatment(t, y, p, acd47_active=False):
           - p["lambda_p"] * P
           - drug_kill_P * P)
     acd47_boost = p.get("acd47_e_boost", 0.0) if acd47_active else 0.0
+    # Cytokine cross-stimulation f_hat*(beta_E E + beta_N N + beta_H H)*X (Eqs 5.3-5.5)
+    f_sig = p["beta_E"] * E + p["beta_N"] * N + p["beta_H"] * H
     dE = (p["a_e"] - p["b_e"] * E - p["c_e"] * E * C
-          + p["p_e"] * H * E / (p["g_e"] + H) - p["delta_e"] * R * E
+          + p.get("r_e", 0.0) * N * C                       # NK-tumor recruitment (5.3)
+          + p["p_e"] * H * E / (p["g_e"] + H)
+          + p["f_e"] * f_sig * E                            # cytokine (5.3)
+          - p["delta_e"] * R * E
           + acd47_boost * E - drug_kill_immune * E)
     dN = (p["a_n"] - p["b_n"] * N - p["c_n"] * N * C
-          + p["p_n"] * H * N / (p["g_n"] + H) - p["delta_n"] * R * N
-          - drug_kill_immune * N)
+          + p["p_n"] * H * N / (p["g_n"] + H)
+          + p["f_n"] * f_sig * N                            # cytokine (5.4)
+          - p["delta_n"] * R * N - drug_kill_immune * N)
     dH = (p["a_h"] - p["b_h"] * H + p["p_h"] * H * H / (p["g_h"] + H)
+          + p["f_h"] * f_sig * H                            # cytokine (5.5)
           - p["delta_h"] * R * H - drug_kill_immune * H)
     dR = (p["a"] - p["delta_r"] * R + p["a_r"] * E + p["b_r"] * H
           + p["p_r"] * H * R / (p["g_r"] + H) - p["r"] * N * R
@@ -345,7 +362,21 @@ def solve_treatment(p_paper: dict, p_treat: dict, t_days: float) -> pd.DataFrame
     acd47_start = p["treat_start_day"] - day_off if p.get("treat_acd47", False) else None
     acd47_end   = p["acd47_end_day"]   - day_off if p.get("treat_acd47", False) else None
 
-    breakpoints = sorted(set([0.0, t_days] + [e[0] for e in inj_events]))
+    # Post-treatment reduced growth (Fig. 5): starts after the LAST active end day.
+    ends = []
+    if p.get("treat_gem", False):   ends.append(p["gem_end_day"])
+    if p.get("treat_abr", False):   ends.append(p["abr_end_day"])
+    if p.get("treat_acd47", False): ends.append(p["acd47_end_day"])
+    post_treat_start = (max(ends) - day_off) if (ends and p.get("kc_post_treat", 0.0) > 0.0) else None
+
+    extra_bp = [post_treat_start] if post_treat_start is not None else []
+    # Add the anti-CD47 window boundaries as breakpoints so integration segments
+    # align with the window — otherwise the per-segment acd47_now flag misses it
+    # (e.g. acd47-alone has no injection breakpoints, so the boost was applied in
+    # the WRONG window: off during [14,35], on forever after).
+    if acd47_start is not None:
+        extra_bp += [b for b in (acd47_start, acd47_end) if 0.0 < b < t_days]
+    breakpoints = sorted(set([0.0, t_days] + [e[0] for e in inj_events] + extra_bp))
     inj_by_time = {}
     for t_ev, drug, dose in inj_events:
         inj_by_time.setdefault(t_ev, []).append((drug, dose))
@@ -361,12 +392,14 @@ def solve_treatment(p_paper: dict, p_treat: dict, t_days: float) -> pd.DataFrame
                 if drug == "abr": y[7] += dose
         if t_end <= t_start:
             continue
+        # Half-open [start, end): with the window boundaries now breakpoints, the
+        # segment starting AT acd47_end must be OFF (strict upper bound).
         acd47_now = (acd47_start is not None
                      and t_start >= acd47_start - 1e-9
-                     and t_start <  acd47_end   + 1e-9)
+                     and t_start <  acd47_end   - 1e-9)
         n_pts  = max(2, int(t_end - t_start) + 1)
         t_eval = np.linspace(t_start, t_end, n_pts)
-        sol = solve_ivp(lambda t, yy: odes_treatment(t, yy, p, acd47_now),
+        sol = solve_ivp(lambda t, yy: odes_treatment(t, yy, p, acd47_now, post_treat_start),
                         [t_start, t_end], y, t_eval=t_eval,
                         method="RK45", rtol=1e-9, atol=1e-9)
         if not sol.success:
