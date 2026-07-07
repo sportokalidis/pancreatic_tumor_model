@@ -299,14 +299,16 @@ def odes_treatment(t, y, p, acd47_active=False, post_treat_start=None):
     drug_kill_P      = p.get("gem_c_p",      0.0) * f_gem + p.get("abr_c_p",      0.0) * f_abr
     drug_kill_immune = p.get("gem_c_immune", 0.0) * f_gem + p.get("abr_c_immune", 0.0) * f_abr
 
-    # Paper Section 5 (Eq. 5.1): only k_c is refit after treatment ends (Fig. 5
-    # titles); the mu_c*P boost is retained.
-    k_c = p["k_c"]
+    # Post-treatment: kc_post_treat is the FITTED EFFECTIVE growth rate ("k_c
+    # after treatment", Fig. 5 titles), used as the TOTAL growth (mu_c*P dropped),
+    # so C plateaus rather than tracking the PSC relapse upward (abr+acd47, 5d).
     if (post_treat_start is not None and t >= post_treat_start
             and p.get("kc_post_treat", 0.0) > 0.0):
-        k_c = p["kc_post_treat"]
+        growth_rate = p["kc_post_treat"]
+    else:
+        growth_rate = p["k_c"] + p["mu_c"] * P
 
-    dC = ((k_c + p["mu_c"] * P) * C * (1.0 - C / p["K_C"])
+    dC = (growth_rate * C * (1.0 - C / p["K_C"])
           - p["b_c"] * N * C
           - p["d_c"] * E * C / (1.0 + p["r1"] * R)
           - drug_kill_C * C)

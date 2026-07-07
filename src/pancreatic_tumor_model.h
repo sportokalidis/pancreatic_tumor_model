@@ -514,12 +514,17 @@ class TumorBehavior : public Behavior {
     const real_t C_global_crowd = sp->use_local_counts
         ? static_cast<real_t>(GetGlobalCounts().C) : cnt.C;
     real_t crowd  = 1.0 - Clamp(C_global_crowd / sp->K_C, 0.0, 1.0);
-    real_t boostP = sp->c_boost_from_P * cnt.P;  // mu_c·P (kept, per Eq. 5.1)
-    // Paper Section 5 fits a REDUCED k_c after treatment ends (Fig. 5 titles).
-    // Per Eq. 5.1 only k_c changes; the mu_c·P boost is retained.
-    const real_t k_c = (ds.post_treatment && sp->kc_post_treat > 0.0)
-                     ? sp->kc_post_treat : sp->c_base_div;
-    real_t div_rate = (k_c + boostP) * crowd;
+    // Post-treatment: kc_post_treat is the FITTED EFFECTIVE growth rate ("k_c
+    // after treatment", Fig. 5 titles) and is used as the TOTAL growth — the
+    // mu_c*P PSC boost is dropped. Otherwise mu_c*P dominates the tiny fitted
+    // rate as P relapses and C climbs instead of plateauing (abr+acd47, Fig. 5d).
+    real_t div_rate;
+    if (ds.post_treatment && sp->kc_post_treat > 0.0) {
+      div_rate = sp->kc_post_treat * crowd;
+    } else {
+      real_t boostP = sp->c_boost_from_P * cnt.P;  // mu_c*P (Eq. 5.1)
+      div_rate = (sp->c_base_div + boostP) * crowd;
+    }
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       c->Divide();
