@@ -68,6 +68,11 @@ class TumorCell : public Cell {
 
   void Initialize(const NewAgentEvent& event) override {
     Base::Initialize(event);
+    // Divide() conserves volume by splitting it between mother and daughter, so
+    // both shrink each division. Size is meaningless in this mean-field model
+    // (forces off; counts use a fixed radius), so pin every cell to one diameter
+    // — otherwise the visualization shows cells shrinking instead of multiplying.
+    SetDiameter(2.0 * SP()->cell_radius_um);
     color_ = bdm_static_cast<TumorCell*>(event.existing_agent)->color_;
   }
 
@@ -91,6 +96,7 @@ class StellateCell : public Cell {
 
   void Initialize(const NewAgentEvent& event) override {
     Base::Initialize(event);
+    SetDiameter(2.0 * SP()->cell_radius_um);  // keep uniform render size (see TumorCell)
     color_ = bdm_static_cast<StellateCell*>(event.existing_agent)->color_;
   }
 
@@ -114,6 +120,7 @@ class EffectorTCell : public Cell {
 
   void Initialize(const NewAgentEvent& event) override {
     Base::Initialize(event);
+    SetDiameter(2.0 * SP()->cell_radius_um);  // keep uniform render size (see TumorCell)
     color_ = bdm_static_cast<EffectorTCell*>(event.existing_agent)->color_;
   }
 
@@ -137,6 +144,7 @@ class NKCell : public Cell {
 
   void Initialize(const NewAgentEvent& event) override {
     Base::Initialize(event);
+    SetDiameter(2.0 * SP()->cell_radius_um);  // keep uniform render size (see TumorCell)
     color_ = bdm_static_cast<NKCell*>(event.existing_agent)->color_;
   }
 
@@ -160,6 +168,7 @@ class HelperTCell : public Cell {
 
   void Initialize(const NewAgentEvent& event) override {
     Base::Initialize(event);
+    SetDiameter(2.0 * SP()->cell_radius_um);  // keep uniform render size (see TumorCell)
     color_ = bdm_static_cast<HelperTCell*>(event.existing_agent)->color_;
   }
 
@@ -183,6 +192,7 @@ class TRegCell : public Cell {
 
   void Initialize(const NewAgentEvent& event) override {
     Base::Initialize(event);
+    SetDiameter(2.0 * SP()->cell_radius_um);  // keep uniform render size (see TumorCell)
     color_ = bdm_static_cast<TRegCell*>(event.existing_agent)->color_;
   }
 
@@ -208,6 +218,7 @@ class CancerStemCell : public Cell {
 
   void Initialize(const NewAgentEvent& event) override {
     Base::Initialize(event);
+    SetDiameter(2.0 * SP()->cell_radius_um);  // keep uniform render size (see TumorCell)
     color_ = bdm_static_cast<CancerStemCell*>(event.existing_agent)->color_;
   }
 
@@ -528,6 +539,7 @@ class TumorBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       c->Divide();
+      c->SetDiameter(2.0 * sp->cell_radius_um);  // reset mother (Divide split its volume)
       c->SetCellColor(sp->color_tumor_div);
     } else {
       c->SetCellColor(sp->color_tumor);
@@ -589,6 +601,7 @@ class PSCBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       psc->Divide();
+      psc->SetDiameter(2.0 * sp->cell_radius_um);  // reset mother (Divide split its volume)
     }
   }
 };
@@ -644,6 +657,7 @@ class EffectorBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       e->Divide();
+      e->SetDiameter(2.0 * sp->cell_radius_um);  // reset mother (Divide split its volume)
     }
   }
 };
@@ -695,6 +709,7 @@ class NKBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       n->Divide();
+      n->SetDiameter(2.0 * sp->cell_radius_um);  // reset mother (Divide split its volume)
     }
   }
 };
@@ -745,6 +760,7 @@ class HelperBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       h->Divide();
+      h->SetDiameter(2.0 * sp->cell_radius_um);  // reset mother (Divide split its volume)
     }
   }
 };
@@ -794,6 +810,7 @@ class TRegBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       r->Divide();
+      r->SetDiameter(2.0 * sp->cell_radius_um);  // reset mother (Divide split its volume)
     }
   }
 };
@@ -837,6 +854,7 @@ class CSCBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       s->Divide();
+      s->SetDiameter(2.0 * sp->cell_radius_um);  // reset mother (Divide split its volume)
     }
   }
 };
@@ -1119,8 +1137,10 @@ inline int Simulate(int argc, const char** argv) {
   rep->AddBehavior(new SourceBehavior());
   ctxt->AddAgent(rep);
 
-  const size_t total_steps =
+  size_t total_steps =
       static_cast<size_t>(sp->total_days * 1440.0 / sp->dt_minutes);
+  
+  // total_steps = 50;
   sim.GetScheduler()->Simulate(total_steps);
 
   std::cout << "Pancreatic tumor ABM completed ("

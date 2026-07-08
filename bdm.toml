@@ -1,5 +1,10 @@
 [visualization]
-export = false
+export = true
+# interval is in SIMULATION STEPS, not days. total_steps = total_days * 1440 / dt_minutes.
+# Pick interval to get one frame per day:  interval = 1440 / dt_minutes
+#   dt = 24h (1440 min) -> interval = 1    (1 step/day  -> 100 frames for 100 days)
+#   dt = 6h  (360 min)  -> interval = 4    (4 steps/day)
+#   dt = 10min          -> interval = 144  (else 14400 frames!)
 interval = 1
 
 [[visualize_agent]]
