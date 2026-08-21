@@ -134,8 +134,8 @@ def compute_convergence_plots(suite_dir: Path):
 
     labels = {"c": "Tumor (C)", "p": "PSC (P)", "e": "CD8⁺ T (E)",
               "n": "NK (N)", "h": "Helper T (H)", "r": "Treg (R)"}
-    colors = {"c": "#1f77b4", "p": "#d62728", "e": "#ff7f0e",
-              "n": "#2ca02c", "h": "#17becf", "r": "#9467bd"}
+    colors = {"c": "#aa0000", "p": "#b5dfff", "e": "#d529ff",
+              "n": "#2e4dff", "h": "#ffbd72", "r": "#c3ff37"}
 
     def plot_cell_type(pop, ax, use_log=False):
         """Plot a single cell type."""
@@ -270,11 +270,11 @@ def compute_convergence_plots(suite_dir: Path):
             ax.plot(ode["days"], ode[pop], color=color, linewidth=3.0,
                     linestyle=":", alpha=0.7, zorder=4)
 
-        # Paper reference (solid line)
-        if pop in df_ref:
-            ref = df_ref[pop]
-            ax.plot(ref["days"], ref[pop], color=color, linewidth=2.5,
-                    linestyle="-", alpha=0.7, zorder=4.5)
+        # Paper reference (solid line) — DISABLED (show ABM + ODE only)
+        # if pop in df_ref:
+        #     ref = df_ref[pop]
+        #     ax.plot(ref["days"], ref[pop], color=color, linewidth=2.5,
+        #             linestyle="-", alpha=0.7, zorder=4.5)
 
         # Mean ± std (shaded region)
         ax.fill_between(days, means[pop] - stds[pop], means[pop] + stds[pop],
@@ -295,35 +295,57 @@ def compute_convergence_plots(suite_dir: Path):
     plt.close(fig)
 
     # 6. All cell types on same axis (logarithmic scale)
+    #    ODE reference = dotted line; ABM mean = solid continuous line (+std band).
+    from matplotlib.lines import Line2D
+    detailed = {
+        "c": "Tumor / cancer cells (C)",
+        "p": "Pancreatic stellate cells / PSC (P)",
+        "e": "CD8⁺ effector T cells / CTL (E)",
+        "n": "Natural-killer cells (N)",
+        "h": "CD4⁺ helper T cells (H)",
+        "r": "Regulatory T cells / Treg (R)",
+    }
     fig, ax = plt.subplots(figsize=(14, 8))
 
     for pop in pops:
         color = colors[pop]
 
-        # ODE reference (dotted line)
+        # ODE reference — dotted line (theoretical mean-field solution)
         if pop in df_ode:
             ode = df_ode[pop]
-            ax.plot(ode["days"], ode[pop], color=color, linewidth=3.0,
-                    linestyle=":", alpha=0.7, zorder=4)
+            ax.plot(ode["days"], ode[pop], color=color, linewidth=2.6,
+                    linestyle=":", alpha=0.9, zorder=4)
 
-        # Paper reference (solid line)
-        if pop in df_ref:
-            ref = df_ref[pop]
-            ax.plot(ref["days"], ref[pop], color=color, linewidth=2.5,
-                    linestyle="-", alpha=0.7, zorder=4.5)
-
-        # Mean ± std (shaded region)
+        # ABM: ±1 std shaded band + solid continuous mean line
         ax.fill_between(days, means[pop] - stds[pop], means[pop] + stds[pop],
                         color=color, alpha=0.15, zorder=2)
-        ax.plot(days, means[pop], color=color, linewidth=1.0, linestyle="--",
-                label=labels[pop], zorder=3)
+        ax.plot(days, means[pop], color=color, linewidth=2.0, linestyle="-",
+                label=detailed[pop], zorder=3)
 
     ax.set_xlabel("Day", fontsize=12)
-    ax.set_ylabel("Cell count", fontsize=12)
-    ax.set_title(f"All Cell Types — Stochastic Convergence ({len(dfs)} seeds) [Log Scale]", fontsize=14)
+    ax.set_ylabel("Cell Count", fontsize=12)
+    ax.set_title(
+        f"All cell populations — ABM vs ODE reference\n"
+        f"{len(dfs)} seeds · S1e4 · mean ± 1 std   [log scale]",
+        fontsize=14)
     ax.set_yscale("log")
-    ax.legend(loc="best", fontsize=11, ncol=3)
     ax.grid(True, alpha=0.3, which="both")
+
+    # Legend 1: colour → cell population
+    leg1 = ax.legend(loc="upper left", fontsize=9.5, ncol=2,
+                     title="Cell population (colour)", framealpha=0.92)
+    leg1.get_title().set_fontweight("bold")
+    ax.add_artist(leg1)
+    # Legend 2: line style → which model
+    style_handles = [
+        Line2D([0], [0], color="0.25", lw=2.0, linestyle="-",
+               label="ABM — mean of seeds (solid) + std band"),
+        Line2D([0], [0], color="0.25", lw=2.6, linestyle=":",
+               label="ODE reference — theory (dotted)"),
+    ]
+    leg2 = ax.legend(handles=style_handles, loc="lower left", fontsize=9.5,
+                     title="Line style (model)", framealpha=0.92)
+    leg2.get_title().set_fontweight("bold")
 
     plt.tight_layout()
     out_path = suite_dir / "validation_all_types_log.png"
@@ -405,11 +427,11 @@ def compute_convergence_plots(suite_dir: Path):
             ax.plot(ode["days"], ode[pop], color=color, linewidth=3.0,
                     linestyle=":", alpha=0.7, zorder=4)
 
-        # Paper reference (solid line)
-        if pop in df_ref:
-            ref = df_ref[pop]
-            ax.plot(ref["days"], ref[pop], color=color, linewidth=2.5,
-                    linestyle="-", alpha=0.7, zorder=4.5)
+        # Paper reference (solid line) — DISABLED (show ABM + ODE only)
+        # if pop in df_ref:
+        #     ref = df_ref[pop]
+        #     ax.plot(ref["days"], ref[pop], color=color, linewidth=2.5,
+        #             linestyle="-", alpha=0.7, zorder=4.5)
 
         # Mean line
         ax.plot(days, means[pop], color=color, linewidth=1.0, linestyle="--",

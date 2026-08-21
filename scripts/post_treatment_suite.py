@@ -155,7 +155,7 @@ def plot_fig5_tumor(aggs, out_path):
         # ODE reference
         if "ode" in a:
             ax.plot(a["ode"]["days"], a["ode"]["c"], color="black", lw=1.4,
-                    ls=":", zorder=4, label="ODE (paper Eqs 5.1-5.7)")
+                    ls=":", zorder=4, label="ODE reference (Eqs 5.1-5.7)")
             allv += list(a["ode"]["c"])
         shade_windows(ax, a["params"], label=True)
         title = proto + ("  [CSC relapse]" if a["csc"] else "")
@@ -167,7 +167,7 @@ def plot_fig5_tumor(aggs, out_path):
         ax.legend(fontsize=7, loc="best")
     for j in range(n, nrow * ncol):
         axes[j // ncol][j % ncol].axis("off")
-    fig.suptitle("Treatment response — tumor C(t): ABM vs paper ODE (Fig. 5 style)",
+    fig.suptitle("Treatment response — tumor C(t): ABM vs ODE reference (Fig. 5 style)",
                  fontsize=13, y=1.0)
     fig.tight_layout()
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
@@ -184,15 +184,78 @@ def plot_compare_tumor(aggs, out_path):
         ax.plot(a["days"], a["mean"]["c"], color=color, lw=1.8,
                 label=f"{proto} (n={a['n_seeds']})")
         allv += list(a["mean"]["c"])
-    # Shade the union treatment window using the first protocol that has one
+    # Shade EACH drug's dosing window (union across all protocols), once per drug,
+    # with its own colour + a labelled legend entry and an end-of-dosing marker.
+    windows = {}  # drug -> (start, end)
     for a in aggs.values():
-        if any(a["params"].get(k) for k in ("treat_gem", "treat_abr", "treat_acd47")):
-            shade_windows(ax, a["params"])
-            break
-    ax.set_title("Tumor response by protocol — ABM mean C(t)")
+        p = a["params"]
+        start = p.get("treat_start_day", 14.0)
+        if p.get("treat_gem"):   windows.setdefault("gem",   (start, p.get("gem_end_day", 56.0)))
+        if p.get("treat_abr"):   windows.setdefault("abr",   (start, p.get("abr_end_day", 28.0)))
+        if p.get("treat_acd47"): windows.setdefault("acd47", (start, p.get("acd47_end_day", 35.0)))
+    # Draw widest first so the (nested) narrower windows stay visible on top.
+    for drug, (start, end) in sorted(windows.items(), key=lambda kv: -(kv[1][1] - kv[1][0])):
+        color, name = DRUG_SHADE[drug]
+        ax.axvspan(start, end, color=color, alpha=0.13, zorder=0,
+                   label=f"{name} dosing (d{start:.0f}–{end:.0f})")
+        ax.axvline(end, color=color, lw=1.1, ls="--", alpha=0.6, zorder=0)
+
+    ax.set_title("Tumor response by protocol — ABM mean C(t)\n"
+                 "shaded = each drug's dosing window (dashed = dosing ends)")
     ax.set_xlabel("Day (paper)"); ax.set_ylabel("Tumor cells C")
     _finalize_log_axis(ax, allv)
-    ax.legend(fontsize=9, loc="best")
+    ax.legend(fontsize=8, loc="best", ncol=2)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {out_path.name}")
+
+
+# --- Cross-protocol tumor comparison WITH the ODE / math model overlaid ---
+def plot_compare_tumor_ode(aggs, out_path):
+    """Same as plot_compare_tumor (all protocols' tumor C(t) on one axis, with
+    each drug's dosing window shaded), but ALSO overlays each protocol's ODE /
+    mathematical-model solution as a dotted line in the same colour."""
+    from matplotlib.lines import Line2D
+    fig, ax = plt.subplots(figsize=(12, 7))
+    allv = []
+    for proto, a in aggs.items():
+        color = PROTO_COLOR.get(proto, None)
+        # ABM mean — solid continuous line
+        ax.plot(a["days"], a["mean"]["c"], color=color, lw=1.8,
+                label=f"{proto} (n={a['n_seeds']})", zorder=3)
+        allv += list(a["mean"]["c"])
+        # ODE / mathematical model — dotted line, same colour
+        if "ode" in a and "c" in a["ode"].columns:
+            ax.plot(a["ode"]["days"], a["ode"]["c"], color=color, lw=2.0,
+                    ls=":", alpha=0.9, zorder=4)
+            allv += list(a["ode"]["c"])
+
+    # Shade each drug's dosing window (union across protocols), once per drug.
+    windows = {}
+    for a in aggs.values():
+        p = a["params"]; start = p.get("treat_start_day", 14.0)
+        if p.get("treat_gem"):   windows.setdefault("gem",   (start, p.get("gem_end_day", 56.0)))
+        if p.get("treat_abr"):   windows.setdefault("abr",   (start, p.get("abr_end_day", 28.0)))
+        if p.get("treat_acd47"): windows.setdefault("acd47", (start, p.get("acd47_end_day", 35.0)))
+    for drug, (start, end) in sorted(windows.items(), key=lambda kv: -(kv[1][1] - kv[1][0])):
+        wc, name = DRUG_SHADE[drug]
+        ax.axvspan(start, end, color=wc, alpha=0.13, zorder=0,
+                   label=f"{name} dosing (d{start:.0f}–{end:.0f})")
+        ax.axvline(end, color=wc, lw=1.1, ls="--", alpha=0.6, zorder=0)
+
+    ax.set_title("Tumor response by protocol — ABM (solid) vs mathematical model / ODE (dotted)\n"
+                 "shaded = each drug's dosing window")
+    ax.set_xlabel("Day (paper)"); ax.set_ylabel("Tumor cells C")
+    _finalize_log_axis(ax, allv)
+    # Legend 1: protocol colours + drug windows
+    leg1 = ax.legend(fontsize=8, loc="upper left", ncol=2)
+    ax.add_artist(leg1)
+    # Legend 2: line style -> which curve
+    style = [Line2D([0], [0], color="0.25", lw=1.8, ls="-", label="ABM (mean of seeds)"),
+             Line2D([0], [0], color="0.25", lw=2.0, ls=":", label="ODE / math model (theory)")]
+    ax.legend(handles=style, fontsize=8, loc="lower right", title="Line style")
+
     fig.tight_layout()
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
@@ -316,6 +379,7 @@ def main():
     print("\nGenerating plots...")
     plot_fig5_tumor(aggs, out_dir / "treatment_fig5_tumor.png")
     plot_compare_tumor(aggs, out_dir / "treatment_compare_tumor.png")
+    plot_compare_tumor_ode(aggs, out_dir / "treatment_compare_tumor_ode.png")
     plot_drugs(aggs, out_dir / "treatment_drugs.png")
     for proto, a in aggs.items():
         plot_allpops(proto, a, out_dir / f"treatment_{proto}_allpops.png")

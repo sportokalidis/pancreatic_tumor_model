@@ -225,6 +225,37 @@ struct SimParam : public ParamGroup {
   int color_csc       = 2;
 
   // --------------------------------------------------------------------------
+  // Drug-diffusion VISUALIZATION (B-hybrid) — OPTIONAL, off by default.
+  // Injects the Cioffi drug schedule into a BioDynaMo diffusion grid at the
+  // tissue boundary so ParaView renders the drug penetrating inward and
+  // decaying. PURELY VISUAL: the tumor/immune kill terms still read the
+  // well-mixed DrugState scalar, so Section-5 ODE replication is unchanged.
+  // Only active for treatment runs (treat_gem / treat_abr).
+  // drug_diff_coeff (D) is auto-clamped to the FTCS stability limit at run
+  // time (D·dt/dx² < 1/6), so it never aborts; tuned for dt=6h treatment runs.
+  // --------------------------------------------------------------------------
+  bool   viz_drug_diffusion   = false;
+  real_t drug_diff_coeff      = 0.1;   // requested D (clamped to CFL limit)
+  int    drug_grid_resolution = 20;    // diffusion grid boxes per axis (finer = smoother clouds)
+  int    drug_n_sources       = 1500;  // random delivery points spread through the volume
+
+  // Sphere-SEED VISUALIZATION — OPTIONAL, off by default. Seeds every cell
+  // inside a sphere (like CARTopiaX's CreateSphereOfTumorCells) so the cell mass
+  // is a genuine tumor spheroid instead of the domain box. Forces GLOBAL mode
+  // (use_local_counts=false) where positions are purely cosmetic, so the
+  // dynamics are the validated mean-field ODE — nothing scientific changes.
+  bool   viz_sphere_seed      = false;
+  real_t viz_seed_radius_frac = 0.80;  // sphere radius as fraction of domain half-width
+
+  // Division rendering mode. true = visualization-friendly: cells keep a uniform
+  // size (BioDynaMo's Divide() otherwise splits volume and shrinks them) and the
+  // daughter spawns a short distance from the mother (no overlap). false =
+  // BioDynaMo's default division (shrink + adjacent placement) — the originally
+  // validated behavior. Only the daughter PLACEMENT matters scientifically, and
+  // only in local mode; size is render-only. Default off (validated).
+  bool   viz_division         = false;
+
+  // --------------------------------------------------------------------------
   // Load / print
   // --------------------------------------------------------------------------
   void LoadParams(const std::string& filename);

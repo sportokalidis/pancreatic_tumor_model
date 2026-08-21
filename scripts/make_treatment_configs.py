@@ -117,6 +117,10 @@ def main():
                          "over-kills the tumor — see dose diagnosis)")
     ap.add_argument("--abr-dose", type=float, default=None,
                     help="Override abr_dose (paper-calibrated ~0.015; old value 0.1 over-kills)")
+    ap.add_argument("--viz-diffusion", action="store_true",
+                    help="Enable the drug-diffusion ParaView visualization "
+                         "(sets viz_drug_diffusion=true) in the generated configs. "
+                         "Visual only — kill dynamics still use the well-mixed scalar.")
     args = ap.parse_args()
 
     if args.gem_dose is not None:
@@ -133,6 +137,8 @@ def main():
           f"(dt={base.get('dt_minutes')}min  E0={base.get('E0')})")
     for proto, spec in PROTOCOLS.items():
         cfg = build_config(base, proto, spec)
+        if args.viz_diffusion:
+            cfg["viz_drug_diffusion"] = True
         if proto == "untreated":
             fname = f"params_untreated_{args.suffix}.json"
         else:

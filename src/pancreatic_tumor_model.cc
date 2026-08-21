@@ -13,4 +13,11 @@
 // -----------------------------------------------------------------------------
 #include "pancreatic_tumor_model.h"
 
-int main(int argc, const char** argv) { return bdm::pancreatic_tumor::Simulate(argc, argv); }
+int main(int argc, const char** argv) {
+  const int rc = bdm::pancreatic_tumor::Simulate(argc, argv);
+  // Simulate() has returned, so BioDynaMo has written its ParaView state file;
+  // repair the drug colour range so `bdm view` renders the diffusion correctly,
+  // no matter how the binary was launched. No-ops for non-treatment runs.
+  bdm::pancreatic_tumor::FixDrugParaviewState();
+  return rc;
+}

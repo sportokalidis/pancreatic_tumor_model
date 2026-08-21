@@ -13,10 +13,16 @@
 
 #include <algorithm>
 #include <atomic>
+#include <climits>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <random>
+#include <vector>
+
+#include <unistd.h>  // readlink — locate the pvsm fixer relative to the binary
 
 namespace bdm {
 namespace pancreatic_tumor {
@@ -37,6 +43,19 @@ inline real_t Clamp(real_t v, real_t lo, real_t hi) {
 inline Real3 ClampPoint(const Real3& pos, real_t lo, real_t hi) {
   return {Clamp(pos[0], lo, hi), Clamp(pos[1], lo, hi), Clamp(pos[2], lo, hi)};
 }
+// Rejection-sample a random position inside a sphere (viz sphere-seed mode).
+inline Real3 RandSpherePos(Random* rng, const Real3& center, real_t radius,
+                           real_t lo, real_t hi) {
+  while (true) {
+    const real_t x = rng->Uniform(-radius, radius);
+    const real_t y = rng->Uniform(-radius, radius);
+    const real_t z = rng->Uniform(-radius, radius);
+    if (x * x + y * y + z * z <= radius * radius) {
+      return ClampPoint({center[0] + x, center[1] + y, center[2] + z}, lo, hi);
+    }
+  }
+}
+
 // Hill saturation: x / (K + x)
 inline real_t Sat(real_t x, real_t K) {
   return (x <= 0.0) ? 0.0 : x / (K + x);
@@ -45,6 +64,41 @@ inline real_t Sat(real_t x, real_t K) {
 inline real_t ProbFromRate(real_t rate_per_day, real_t dt_day) {
   if (rate_per_day <= 0.0) return 0.0;
   return 1.0 - std::exp(-rate_per_day * dt_day);
+}
+
+// On cell division BioDynaMo places the daughter touching the mother; with
+// mechanical forces disabled and a volume split the pair can render one inside
+// the other. Instead place the daughter a short fixed distance from the mother
+// in a random direction: it stays a local neighbour (biologically sensible) but
+// is clearly separated. Fires only for division events, not other new-agent ones.
+// Visualization-friendly division for the DAUGHTER (viz_division only): pin it
+// to a uniform size (BioDynaMo's Divide() otherwise splits volume and shrinks
+// it) and place it a short distance from the mother so the pair doesn't overlap.
+// No-op when viz_division=false → BioDynaMo's default (shrunk + adjacent).
+inline void VizDivideDaughter(Cell* daughter, const NewAgentEvent& event,
+                              real_t diameter) {
+  if (!SP()->viz_division) return;
+  if (event.GetUid() != CellDivisionEvent::kUid) return;
+  daughter->SetDiameter(diameter);                    // uniform render size
+  auto* rng = Simulation::GetActive()->GetRandom();
+  const auto* sp = SP();
+  const Real3 mpos = event.existing_agent->GetPosition();
+  Real3 dir = {rng->Uniform(-1.0, 1.0), rng->Uniform(-1.0, 1.0),
+               rng->Uniform(-1.0, 1.0)};
+  real_t len = std::sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+  if (len < 1e-9) { dir = {1.0, 0.0, 0.0}; len = 1.0; }
+  // Center-to-center = 1.1 diameters: the daughter sits right against the mother
+  // (surfaces just touching, a tiny gap) in a random direction — adjacent like a
+  // bud, never one inside the other. (=1 diameter would touch exactly; <1 overlaps.)
+  const real_t dist = 2 * daughter->GetDiameter();
+  const Real3 pos = {mpos[0] + dir[0] / len * dist,
+                     mpos[1] + dir[1] / len * dist,
+                     mpos[2] + dir[2] / len * dist};
+  daughter->SetPosition(ClampPoint(pos, sp->min_bound, sp->max_bound));
+}
+// Reset the MOTHER's size after Divide() (viz_division only; no-op otherwise).
+inline void VizResetMotherSize(Cell* mother, real_t diameter) {
+  if (SP()->viz_division) mother->SetDiameter(diameter);
 }
 
 // ============================================================================
@@ -62,17 +116,13 @@ class TumorCell : public Cell {
   TumorCell() = default;
   explicit TumorCell(const Real3& p) {
     SetPosition(p);
-    SetDiameter(2.0 * SP()->cell_radius_um);
+    SetDiameter(SP()->cell_radius_um);
     color_ = SP()->color_tumor;
   }
 
   void Initialize(const NewAgentEvent& event) override {
     Base::Initialize(event);
-    // Divide() conserves volume by splitting it between mother and daughter, so
-    // both shrink each division. Size is meaningless in this mean-field model
-    // (forces off; counts use a fixed radius), so pin every cell to one diameter
-    // — otherwise the visualization shows cells shrinking instead of multiplying.
-    SetDiameter(2.0 * SP()->cell_radius_um);
+    VizDivideDaughter(this, event, SP()->cell_radius_um);
     color_ = bdm_static_cast<TumorCell*>(event.existing_agent)->color_;
   }
 
@@ -90,13 +140,13 @@ class StellateCell : public Cell {
   StellateCell() = default;
   explicit StellateCell(const Real3& p) {
     SetPosition(p);
-    SetDiameter(2.0 * SP()->cell_radius_um);
+    SetDiameter(SP()->cell_radius_um);
     color_ = SP()->color_psc;
   }
 
   void Initialize(const NewAgentEvent& event) override {
     Base::Initialize(event);
-    SetDiameter(2.0 * SP()->cell_radius_um);  // keep uniform render size (see TumorCell)
+    VizDivideDaughter(this, event, SP()->cell_radius_um);
     color_ = bdm_static_cast<StellateCell*>(event.existing_agent)->color_;
   }
 
@@ -114,13 +164,13 @@ class EffectorTCell : public Cell {
   EffectorTCell() = default;
   explicit EffectorTCell(const Real3& p) {
     SetPosition(p);
-    SetDiameter(2.0 * SP()->cell_radius_um);
+    SetDiameter(SP()->cell_radius_um);
     color_ = SP()->color_eff;
   }
 
   void Initialize(const NewAgentEvent& event) override {
     Base::Initialize(event);
-    SetDiameter(2.0 * SP()->cell_radius_um);  // keep uniform render size (see TumorCell)
+    VizDivideDaughter(this, event, SP()->cell_radius_um);
     color_ = bdm_static_cast<EffectorTCell*>(event.existing_agent)->color_;
   }
 
@@ -138,13 +188,13 @@ class NKCell : public Cell {
   NKCell() = default;
   explicit NKCell(const Real3& p) {
     SetPosition(p);
-    SetDiameter(2.0 * SP()->cell_radius_um);
+    SetDiameter(SP()->cell_radius_um);
     color_ = SP()->color_nk;
   }
 
   void Initialize(const NewAgentEvent& event) override {
     Base::Initialize(event);
-    SetDiameter(2.0 * SP()->cell_radius_um);  // keep uniform render size (see TumorCell)
+    VizDivideDaughter(this, event, SP()->cell_radius_um);
     color_ = bdm_static_cast<NKCell*>(event.existing_agent)->color_;
   }
 
@@ -162,13 +212,13 @@ class HelperTCell : public Cell {
   HelperTCell() = default;
   explicit HelperTCell(const Real3& p) {
     SetPosition(p);
-    SetDiameter(2.0 * SP()->cell_radius_um);
+    SetDiameter(SP()->cell_radius_um);
     color_ = SP()->color_helper;
   }
 
   void Initialize(const NewAgentEvent& event) override {
     Base::Initialize(event);
-    SetDiameter(2.0 * SP()->cell_radius_um);  // keep uniform render size (see TumorCell)
+    VizDivideDaughter(this, event, SP()->cell_radius_um);
     color_ = bdm_static_cast<HelperTCell*>(event.existing_agent)->color_;
   }
 
@@ -186,13 +236,13 @@ class TRegCell : public Cell {
   TRegCell() = default;
   explicit TRegCell(const Real3& p) {
     SetPosition(p);
-    SetDiameter(2.0 * SP()->cell_radius_um);
+    SetDiameter(SP()->cell_radius_um);
     color_ = SP()->color_treg;
   }
 
   void Initialize(const NewAgentEvent& event) override {
     Base::Initialize(event);
-    SetDiameter(2.0 * SP()->cell_radius_um);  // keep uniform render size (see TumorCell)
+    VizDivideDaughter(this, event, SP()->cell_radius_um);
     color_ = bdm_static_cast<TRegCell*>(event.existing_agent)->color_;
   }
 
@@ -212,13 +262,13 @@ class CancerStemCell : public Cell {
   CancerStemCell() = default;
   explicit CancerStemCell(const Real3& p) {
     SetPosition(p);
-    SetDiameter(2.0 * SP()->cell_radius_um);
+    SetDiameter(SP()->cell_radius_um);
     color_ = SP()->color_csc;
   }
 
   void Initialize(const NewAgentEvent& event) override {
     Base::Initialize(event);
-    SetDiameter(2.0 * SP()->cell_radius_um);  // keep uniform render size (see TumorCell)
+    VizDivideDaughter(this, event, SP()->cell_radius_um);
     color_ = bdm_static_cast<CancerStemCell*>(event.existing_agent)->color_;
   }
 
@@ -240,6 +290,7 @@ struct Counts { size_t C=0, P=0, E=0, N=0, H=0, R=0, S=0; };  // S = Cancer Stem
 struct GlobalCensus {
   std::atomic<size_t> step_cached{std::numeric_limits<size_t>::max()};
   Counts              cnt;
+  real_t              tumor_radius = 0.0;  // max tumor-cell dist from center (viz)
   std::mutex          mtx;
 
   static GlobalCensus& Instance() { static GlobalCensus gc; return gc; }
@@ -255,9 +306,22 @@ struct GlobalCensus {
     // Re-check inside lock (double-checked locking).
     if (step_cached.load(std::memory_order_relaxed) == step) return;
 
+    // In viz sphere-seed mode also track the tumor's extent so immune cells can
+    // follow the growing mass (see ImmuneRandomWalk). Skipped otherwise.
+    const auto* sp = SP();
+    const bool   track_r = sp->viz_sphere_seed;
+    const real_t center  = (sp->min_bound + sp->max_bound) / 2.0;
     Counts c;
+    real_t sum_r2 = 0.0;
     sim->GetResourceManager()->ForEachAgent([&](Agent* a) {
-      if      (dynamic_cast<TumorCell*>(a))     ++c.C;
+      if (dynamic_cast<TumorCell*>(a)) {
+        ++c.C;
+        if (track_r) {
+          const Real3 p = a->GetPosition();
+          const real_t dx = p[0] - center, dy = p[1] - center, dz = p[2] - center;
+          sum_r2 += dx * dx + dy * dy + dz * dz;
+        }
+      }
       else if (dynamic_cast<StellateCell*>(a))  ++c.P;
       else if (dynamic_cast<EffectorTCell*>(a)) ++c.E;
       else if (dynamic_cast<NKCell*>(a))        ++c.N;
@@ -266,10 +330,15 @@ struct GlobalCensus {
       else if (dynamic_cast<CancerStemCell*>(a)) ++c.S;
     });
     cnt = c;
+    // Effective tumor ball radius from the RMS distance (robust vs a few
+    // outliers): for a uniform ball, mean(r^2) = (3/5)R^2 -> R = rms * 1.291.
+    tumor_radius = (c.C > 0) ? std::sqrt(sum_r2 / static_cast<real_t>(c.C)) * 1.291
+                             : 0.0;
     step_cached.store(step, std::memory_order_release);
   }
 
   const Counts& Get() const { return cnt; }
+  real_t TumorRadius() const { return tumor_radius; }
 };
 
 // Local neighborhood census — counts within a radius around a given agent.
@@ -316,6 +385,38 @@ inline Counts GetGlobalCounts() {
   return gc.Get();
 }
 
+// Immune random walk: one Gaussian step per step. Active in local mode (cells
+// infiltrate the tumor) and in viz_sphere_seed mode. In viz mode the step is
+// reflected inward at a radius that GROWS with the tumor (max of the seeding
+// sphere and the live tumor extent), so immune cells expand together with the
+// tumor mass rather than being stuck in the initial sphere. Always kept inside
+// the domain box.
+inline void ImmuneRandomWalk(Cell* cell, const SimParam* sp, Random* rng) {
+  if (!sp->use_local_counts && !sp->viz_sphere_seed) return;
+  const Real3 pos = cell->GetPosition();
+  const real_t s  = sp->immune_step_um;
+  Real3 np = {pos[0] + rng->Gaus(0.0, s),
+              pos[1] + rng->Gaus(0.0, s),
+              pos[2] + rng->Gaus(0.0, s)};
+  if (sp->viz_sphere_seed) {
+    const real_t c     = (sp->min_bound + sp->max_bound) / 2.0;
+    const real_t seedR = sp->viz_seed_radius_frac * (sp->max_bound - sp->min_bound) / 2.0;
+    auto& gc = GlobalCensus::Instance();
+    gc.RefreshIfNeeded();
+    // Follow the tumor: allow immune cells out to the current tumor extent
+    // (+ a couple of steps of margin), but never less than the seed sphere.
+    const real_t R = std::max(seedR, gc.TumorRadius() + 2.0 * s);
+    const real_t dx = np[0] - c, dy = np[1] - c, dz = np[2] - c;
+    const real_t d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 > R * R) {                          // stepped past the front — reflect in
+      const real_t d = std::sqrt(d2);
+      const real_t scale = std::max(0.0, 2.0 * R - d) / d;
+      np = {c + dx * scale, c + dy * scale, c + dz * scale};
+    }
+  }
+  cell->SetPosition(ClampPoint(np, sp->min_bound, sp->max_bound));
+}
+
 // Volume ratio V_total / V_local.
 // In global mode = 1.0 (no adjustment).
 // In local mode, multiplying raw local counts by this factor gives their
@@ -355,6 +456,9 @@ struct EffCounts {
 // When no treatment flag is set, RefreshIfNeeded() short-circuits and all
 // concentrations stay 0 — so the base model path is completely unaffected.
 // ============================================================================
+// Diffusion-grid substance ids for the optional drug-diffusion visualization.
+enum DrugSubstance : int { kGemSubstance = 0, kAbrSubstance = 1 };
+
 struct DrugState {
   std::atomic<size_t> step_cached{std::numeric_limits<size_t>::max()};
   std::mutex mtx;
@@ -362,6 +466,10 @@ struct DrugState {
   real_t M_gem = 0.0;
   real_t M_abr = 0.0;
   bool   acd47_active = false;
+  // Dose injected THIS step (0 otherwise) — drives the optional drug-diffusion
+  // visualization grid (DrugDiffusionInjector). Not used by the kill dynamics.
+  real_t gem_injected = 0.0;
+  real_t abr_injected = 0.0;
   // True once the step is past the last active treatment's end day — triggers
   // the paper's post-treatment reduced growth rate kc_post_treat (Section 5).
   bool   post_treatment = false;
@@ -417,20 +525,28 @@ struct DrugState {
       return step >= s0 && step <= s1 && ((step - s0) % freq == 0);
     };
 
+    gem_injected = 0.0;
     if (sp->treat_gem) {
       M_gem *= std::exp(-sp->gem_gamma * dt_day);
       size_t s0   = s_of(sp->treat_start_day);
       size_t s1   = s_of(sp->gem_end_day);
       size_t freq = static_cast<size_t>(std::round(sp->gem_freq_days * spd_f));
-      if (freq > 0 && is_inject(s0, s1, freq)) M_gem += sp->gem_dose;
+      if (freq > 0 && is_inject(s0, s1, freq)) {
+        M_gem += sp->gem_dose;
+        gem_injected = sp->gem_dose;
+      }
     }
 
+    abr_injected = 0.0;
     if (sp->treat_abr) {
       M_abr *= std::exp(-sp->abr_gamma * dt_day);
       size_t s0   = s_of(sp->treat_start_day);
       size_t s1   = s_of(sp->abr_end_day);
       size_t freq = static_cast<size_t>(std::round(sp->abr_freq_days * spd_f));
-      if (freq > 0 && is_inject(s0, s1, freq)) M_abr += sp->abr_dose;
+      if (freq > 0 && is_inject(s0, s1, freq)) {
+        M_abr += sp->abr_dose;
+        abr_injected = sp->abr_dose;
+      }
     }
 
     acd47_active = sp->treat_acd47
@@ -539,7 +655,7 @@ class TumorBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       c->Divide();
-      c->SetDiameter(2.0 * sp->cell_radius_um);  // reset mother (Divide split its volume)
+      VizResetMotherSize(c, sp->cell_radius_um);
       c->SetCellColor(sp->color_tumor_div);
     } else {
       c->SetCellColor(sp->color_tumor);
@@ -562,6 +678,7 @@ class TumorBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(killE + killN + drug_kill, dt_day)) {
       ctxt->RemoveAgent(c->GetUid());
+      // c->SetCellColor(0);
     }
   }
 };
@@ -601,7 +718,7 @@ class PSCBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       psc->Divide();
-      psc->SetDiameter(2.0 * sp->cell_radius_um);  // reset mother (Divide split its volume)
+      VizResetMotherSize(psc, sp->cell_radius_um);
     }
   }
 };
@@ -619,14 +736,7 @@ class EffectorBehavior : public Behavior {
     const auto* sp = SP();
 
     // Random walk — enables immune infiltration of the tumor sphere
-    if (sp->use_local_counts) {
-      const Real3 pos = e->GetPosition();
-      const real_t s  = sp->immune_step_um;
-      e->SetPosition(ClampPoint({pos[0] + rng->Gaus(0.0, s),
-                                 pos[1] + rng->Gaus(0.0, s),
-                                 pos[2] + rng->Gaus(0.0, s)},
-                                sp->min_bound, sp->max_bound));
-    }
+    ImmuneRandomWalk(e, sp, rng);  // move each step (bounded to sphere in viz mode)
 
     const real_t dt_day = sp->dt_minutes / 1440.0;
     const EffCounts cnt(GetCounts(*e), DensityCompensation());
@@ -657,7 +767,7 @@ class EffectorBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       e->Divide();
-      e->SetDiameter(2.0 * sp->cell_radius_um);  // reset mother (Divide split its volume)
+      VizResetMotherSize(e, sp->cell_radius_um);
     }
   }
 };
@@ -674,14 +784,7 @@ class NKBehavior : public Behavior {
     auto* rng  = Simulation::GetActive()->GetRandom();
     const auto* sp = SP();
 
-    if (sp->use_local_counts) {
-      const Real3 pos = n->GetPosition();
-      const real_t s  = sp->immune_step_um;
-      n->SetPosition(ClampPoint({pos[0] + rng->Gaus(0.0, s),
-                                 pos[1] + rng->Gaus(0.0, s),
-                                 pos[2] + rng->Gaus(0.0, s)},
-                                sp->min_bound, sp->max_bound));
-    }
+    ImmuneRandomWalk(n, sp, rng);  // move each step (bounded to sphere in viz mode)
 
     const real_t dt_day = sp->dt_minutes / 1440.0;
     const EffCounts cnt(GetCounts(*n), DensityCompensation());
@@ -709,7 +812,7 @@ class NKBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       n->Divide();
-      n->SetDiameter(2.0 * sp->cell_radius_um);  // reset mother (Divide split its volume)
+      VizResetMotherSize(n, sp->cell_radius_um);
     }
   }
 };
@@ -726,14 +829,7 @@ class HelperBehavior : public Behavior {
     auto* rng  = Simulation::GetActive()->GetRandom();
     const auto* sp = SP();
 
-    if (sp->use_local_counts) {
-      const Real3 pos = h->GetPosition();
-      const real_t s  = sp->immune_step_um;
-      h->SetPosition(ClampPoint({pos[0] + rng->Gaus(0.0, s),
-                                 pos[1] + rng->Gaus(0.0, s),
-                                 pos[2] + rng->Gaus(0.0, s)},
-                                sp->min_bound, sp->max_bound));
-    }
+    ImmuneRandomWalk(h, sp, rng);  // move each step (bounded to sphere in viz mode)
 
     const real_t dt_day = sp->dt_minutes / 1440.0;
     const EffCounts cnt(GetCounts(*h), DensityCompensation());
@@ -760,7 +856,7 @@ class HelperBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       h->Divide();
-      h->SetDiameter(2.0 * sp->cell_radius_um);  // reset mother (Divide split its volume)
+      VizResetMotherSize(h, sp->cell_radius_um);
     }
   }
 };
@@ -777,14 +873,7 @@ class TRegBehavior : public Behavior {
     auto* rng  = Simulation::GetActive()->GetRandom();
     const auto* sp = SP();
 
-    if (sp->use_local_counts) {
-      const Real3 pos = r->GetPosition();
-      const real_t s  = sp->immune_step_um;
-      r->SetPosition(ClampPoint({pos[0] + rng->Gaus(0.0, s),
-                                 pos[1] + rng->Gaus(0.0, s),
-                                 pos[2] + rng->Gaus(0.0, s)},
-                                sp->min_bound, sp->max_bound));
-    }
+    ImmuneRandomWalk(r, sp, rng);  // move each step (bounded to sphere in viz mode)
 
     const real_t dt_day = sp->dt_minutes / 1440.0;
     const EffCounts cnt(GetCounts(*r), DensityCompensation());
@@ -810,7 +899,7 @@ class TRegBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       r->Divide();
-      r->SetDiameter(2.0 * sp->cell_radius_um);  // reset mother (Divide split its volume)
+      VizResetMotherSize(r, sp->cell_radius_um);
     }
   }
 };
@@ -854,7 +943,7 @@ class CSCBehavior : public Behavior {
 
     if (rng->Uniform(0, 1) < ProbFromRate(div_rate, dt_day)) {
       s->Divide();
-      s->SetDiameter(2.0 * sp->cell_radius_um);  // reset mother (Divide split its volume)
+      VizResetMotherSize(s, sp->cell_radius_um);
     }
   }
 };
@@ -888,7 +977,12 @@ class SourceBehavior : public Behavior {
     const real_t lo     = sp->min_bound;
     const real_t hi     = sp->max_bound;
 
+    // Viz sphere-seed: keep recruited immune cells inside the sphere too, so the
+    // mass stays a spheroid rather than growing a box halo of new cells.
+    const Real3 dcenter = {(lo + hi) / 2.0, (lo + hi) / 2.0, (lo + hi) / 2.0};
+    const real_t vradius = sp->viz_seed_radius_frac * (hi - lo) / 2.0;
     auto rpos = [&]() -> Real3 {
+      if (sp->viz_sphere_seed) return RandSpherePos(rng, dcenter, vradius, lo, hi);
       return {rng->Uniform(lo, hi), rng->Uniform(lo, hi), rng->Uniform(lo, hi)};
     };
     auto spawn_e = [&]() {
@@ -943,6 +1037,59 @@ class SourceBehavior : public Behavior {
       spawn_poisson(spawn_c,
                     (sp->csc_a2 + 2.0 * sp->csc_a3) * static_cast<real_t>(cnt.S));
     }
+  }
+};
+
+// ============================================================================
+// DrugDiffusionInjector  (Paper Section 5) — OPTIONAL, viz_drug_diffusion only.
+//
+// On each dosing step, deposits the dose at a FIXED set of random points spread
+// through the whole simulation volume ("vasculature" delivering drug into the
+// tissue). Diffusion then smooths the blobs into overlapping clouds, so the
+// field is a soft, spatially-textured haze that fills the domain (like the
+// soma_clustering substance) and pulses with the Cioffi schedule, decaying
+// between injections. PURELY VISUAL — the kill dynamics still use the
+// well-mixed DrugState scalar, so Section-5 ODE replication is unchanged.
+// The source points use their own RNG (seeded from `seed`) so enabling the
+// visualization does not perturb the simulation's own random stream.
+// Attached to the reporter agent (single, non-dividing).
+// ============================================================================
+class DrugDiffusionInjector : public Behavior {
+  BDM_BEHAVIOR_HEADER(DrugDiffusionInjector, Behavior, 1);
+
+ public:
+  void Run(Agent* /*unused*/) override {
+    const auto* sp = SP();
+    if (!sp->viz_drug_diffusion) return;
+    auto& ds = DrugState::Instance();
+    ds.RefreshIfNeeded();
+    auto* rm = Simulation::GetActive()->GetResourceManager();
+
+    if (!built_) BuildSources(sp);
+
+    auto deposit = [&](int id, real_t amount) {
+      auto* g = rm->GetDiffusionGrid(id);
+      if (!g) return;
+      for (const auto& p : sources_) g->ChangeConcentrationBy(p, amount);
+    };
+    if (sp->treat_gem && ds.gem_injected > 0.0) deposit(kGemSubstance, ds.gem_injected);
+    if (sp->treat_abr && ds.abr_injected > 0.0) deposit(kAbrSubstance, ds.abr_injected);
+  }
+
+ private:
+  bool built_ = false;
+  std::vector<Real3> sources_;
+
+  // Fixed random source points scattered through the whole domain volume
+  // (systemic drug — covers the tumor as it grows/expands toward the box).
+  void BuildSources(const SimParam* sp) {
+    const real_t lo = sp->min_bound, hi = sp->max_bound;
+    std::mt19937 gen(static_cast<unsigned>(sp->seed) + 12345u);
+    std::uniform_real_distribution<real_t> U(lo, hi);
+    sources_.reserve(sp->drug_n_sources);
+    for (int i = 0; i < sp->drug_n_sources; ++i)
+      sources_.push_back({U(gen), U(gen), U(gen)});
+    built_ = true;
   }
 };
 
@@ -1021,6 +1168,16 @@ inline int Simulate(int argc, const char** argv) {
     param->min_bound            = tmp.min_bound;
     param->max_bound            = tmp.max_bound;
     param->simulation_time_step = tmp.dt_minutes;
+    // Optional drug-diffusion visualization: register the concentration fields
+    // for ParaView export (only the substances actually defined in Simulate()).
+    // gradient=false: the extra vector array carries an L2_NORM_RANGE
+    // InformationKey that some ParaView reader versions fail to parse. Color by
+    // "Substance Concentration"; use ParaView's Gradient filter if a vector is
+    // needed. {name, concentration, gradient}.
+    if (tmp.viz_drug_diffusion) {
+      if (tmp.treat_gem) param->visualize_diffusion.push_back({"Gemcitabine", true, false});
+      if (tmp.treat_abr) param->visualize_diffusion.push_back({"Abraxane", true, false});
+    }
   };
 
   Simulation sim(argc, argv, setp);
@@ -1030,6 +1187,10 @@ inline int Simulate(int argc, const char** argv) {
   // returns correct values in all behaviors.
   auto* sp = const_cast<SimParam*>(sim.GetParam()->Get<SimParam>());
   *sp = tmp;
+  // Sphere-seed visualization runs in GLOBAL mode: positions become purely
+  // cosmetic (dynamics depend only on total counts = the validated mean-field),
+  // so seeding a spheroid changes nothing scientific.
+  if (sp->viz_sphere_seed) sp->use_local_counts = false;
   sp->PrintParams();
 
   // Disable mechanical forces — spatial positions are for local counting only;
@@ -1050,6 +1211,42 @@ inline int Simulate(int argc, const char** argv) {
     if (env) {
       int32_t bl = static_cast<int32_t>(std::ceil(sp->local_radius_um));
       env->SetBoxLength(bl);
+    }
+  }
+
+  // Optional drug-diffusion visualization grids (B-hybrid): define substances
+  // with the paper PK decay so ParaView can render the drug field. The kill
+  // terms still use the well-mixed DrugState scalar — this is visualization
+  // only. D is clamped below BioDynaMo's FTCS stability limits (which are hard
+  // Fatal aborts) so the run never crashes regardless of dt / domain / res.
+  if (sp->viz_drug_diffusion && (sp->treat_gem || sp->treat_abr)) {
+    const real_t dt   = sp->dt_minutes;                       // diffusion Step dt
+    const real_t dt_d = sp->dt_minutes / 1440.0;
+    const real_t dx   = (sp->max_bound - sp->min_bound) /
+                        std::max(1, sp->drug_grid_resolution);
+    // Largest D that satisfies stability (μ+12D/dx²)·dt≤2 and decay-safety
+    // 1−μ−6D·dt/dx²≥0, with an 0.8 safety factor. μ is the per-step decay.
+    auto safe_D = [&](real_t mu) {
+      const real_t d_stab  = (2.0 / dt - mu) * dx * dx / 12.0;
+      const real_t d_decay = (1.0 - mu) * dx * dx / (6.0 * dt);
+      const real_t d_max   = 0.8 * std::max(0.0, std::min(d_stab, d_decay));
+      return std::min(static_cast<real_t>(sp->drug_diff_coeff), d_max);
+    };
+    if (sp->treat_gem) {
+      const real_t mu = (1.0 - std::exp(-sp->gem_gamma * dt_d)) / dt;
+      const real_t D  = safe_D(mu);
+      ModelInitializer::DefineSubstance(kGemSubstance, "Gemcitabine", D, mu,
+                                        sp->drug_grid_resolution);
+      std::cout << "[viz] Gemcitabine diffusion grid: D=" << D
+                << " mu=" << mu << " res=" << sp->drug_grid_resolution << "\n";
+    }
+    if (sp->treat_abr) {
+      const real_t mu = (1.0 - std::exp(-sp->abr_gamma * dt_d)) / dt;
+      const real_t D  = safe_D(mu);
+      ModelInitializer::DefineSubstance(kAbrSubstance, "Abraxane", D, mu,
+                                        sp->drug_grid_resolution);
+      std::cout << "[viz] Abraxane diffusion grid: D=" << D
+                << " mu=" << mu << " res=" << sp->drug_grid_resolution << "\n";
     }
   }
 
@@ -1090,34 +1287,44 @@ inline int Simulate(int argc, const char** argv) {
         : rand_pos();
   };
 
+  // Viz sphere-seed: place EVERY cell inside a sphere so the mass renders as a
+  // tumor spheroid instead of the domain box. Only for global-mode viz runs
+  // (positions cosmetic). Otherwise use the normal placement.
+  const real_t viz_radius = sp->viz_seed_radius_frac * (hi - lo) / 2.0;
+  auto seed_pos = [&](bool is_tumor) -> Real3 {
+    if (sp->viz_sphere_seed)
+      return RandSpherePos(rng, domain_center, viz_radius, lo, hi);
+    return is_tumor ? pos_tumor() : ClampPoint(rand_pos(), lo, hi);
+  };
+
   // --- Seed populations ---
   for (size_t i = 0; i < sp->C0; ++i) {
-    auto* c = new TumorCell(pos_tumor());
+    auto* c = new TumorCell(seed_pos(true));
     c->AddBehavior(new TumorBehavior());
     ctxt->AddAgent(c);
   }
   for (size_t i = 0; i < sp->P0; ++i) {
-    auto* p = new StellateCell(pos_tumor());
+    auto* p = new StellateCell(seed_pos(true));
     p->AddBehavior(new PSCBehavior());
     ctxt->AddAgent(p);
   }
   for (size_t i = 0; i < sp->E0; ++i) {
-    auto* e = new EffectorTCell(ClampPoint(rand_pos(), lo, hi));
+    auto* e = new EffectorTCell(seed_pos(false));
     e->AddBehavior(new EffectorBehavior());
     ctxt->AddAgent(e);
   }
   for (size_t i = 0; i < sp->N0; ++i) {
-    auto* n = new NKCell(ClampPoint(rand_pos(), lo, hi));
+    auto* n = new NKCell(seed_pos(false));
     n->AddBehavior(new NKBehavior());
     ctxt->AddAgent(n);
   }
   for (size_t i = 0; i < sp->H0; ++i) {
-    auto* h = new HelperTCell(ClampPoint(rand_pos(), lo, hi));
+    auto* h = new HelperTCell(seed_pos(false));
     h->AddBehavior(new HelperBehavior());
     ctxt->AddAgent(h);
   }
   for (size_t i = 0; i < sp->R0; ++i) {
-    auto* r = new TRegCell(ClampPoint(rand_pos(), lo, hi));
+    auto* r = new TRegCell(seed_pos(false));
     r->AddBehavior(new TRegBehavior());
     ctxt->AddAgent(r);
   }
@@ -1135,17 +1342,73 @@ inline int Simulate(int argc, const char** argv) {
   auto* rep = new ReporterCell();
   rep->AddBehavior(new ReportPopCounts());
   rep->AddBehavior(new SourceBehavior());
+  if (sp->viz_drug_diffusion) rep->AddBehavior(new DrugDiffusionInjector());
   ctxt->AddAgent(rep);
 
   size_t total_steps =
       static_cast<size_t>(sp->total_days * 1440.0 / sp->dt_minutes);
   
-  // total_steps = 50;
+  
   sim.GetScheduler()->Simulate(total_steps);
 
   std::cout << "Pancreatic tumor ABM completed ("
             << sp->total_days << " days).\n";
   return 0;
+}
+
+// ============================================================================
+// FixDrugParaviewState
+// Repairs the drug colour range in BioDynaMo's generated ParaView state so
+// `bdm view` renders the diffusion field correctly — automatically, however the
+// binary was launched (bdm run, direct, IDE). BioDynaMo colours the substance
+// from frame 0 (drug = 0 before treatment) → a degenerate [0, FLT_MIN] range →
+// flat/blank field. This runs scripts/paraview/fix_drug_pvsm.py (found relative
+// to the executable) which reads the real data range and rescales ONLY the
+// drug's transfer functions, leaving cells and colours untouched. No-ops when
+// no drug field was exported. Call AFTER Simulate() returns (state is written
+// when the Simulation is destroyed at the end of Simulate()).
+// ============================================================================
+inline void FixDrugParaviewState(
+    const std::string& viz_dir = "output/pancreatic_tumor_new") {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  if (!fs::exists(viz_dir, ec)) return;
+
+  bool has_drug = false;
+  for (const auto& e : fs::directory_iterator(viz_dir, ec)) {
+    const std::string name = e.path().filename().string();
+    if (e.path().extension() == ".pvti" &&
+        (name.rfind("Abraxane-", 0) == 0 || name.rfind("Gemcitabine-", 0) == 0)) {
+      has_drug = true;
+      break;
+    }
+  }
+  if (!has_drug) return;  // base / non-treatment run — no drug range to fix
+
+  const char* pv = std::getenv("ParaView_DIR");
+  if (pv == nullptr) {
+    std::cerr << "[viz] ParaView_DIR unset — skipping pvsm fix "
+                 "(run 'pvbatch scripts/paraview/fix_drug_pvsm.py " << viz_dir
+              << "' manually).\n";
+    return;
+  }
+
+  // Locate the fixer script relative to this executable (<repo>/build/<bin>).
+  char buf[PATH_MAX];
+  const ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+  if (n <= 0) return;
+  buf[n] = '\0';
+  const fs::path script =
+      fs::path(buf).parent_path() / ".." / "scripts" / "paraview" / "fix_drug_pvsm.py";
+  if (!fs::exists(script, ec)) {
+    std::cerr << "[viz] fix_drug_pvsm.py not found next to binary — skipping.\n";
+    return;
+  }
+
+  const std::string cmd = "\"" + std::string(pv) + "/bin/pvbatch\" \"" +
+                          script.string() + "\" \"" + viz_dir + "\" 2>/dev/null";
+  std::cout << "[viz] fixing drug-diffusion ParaView state for 'bdm view'...\n";
+  std::system(cmd.c_str());  // pvbatch may segfault on exit AFTER writing — fine
 }
 
 }  // namespace pancreatic_tumor

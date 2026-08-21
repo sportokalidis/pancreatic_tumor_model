@@ -171,6 +171,17 @@ void SimParam::LoadParams(const std::string& filename) {
   load_int("color_helper",    color_helper);
   load_int("color_treg",      color_treg);
   load_int("color_csc",       color_csc);
+
+  // Drug-diffusion visualization (B-hybrid)
+  load_bool("viz_drug_diffusion",   viz_drug_diffusion);
+  load_real("drug_diff_coeff",      drug_diff_coeff);
+  load_int("drug_grid_resolution",  drug_grid_resolution);
+  load_int("drug_n_sources",        drug_n_sources);
+
+  // Sphere-seed visualization
+  load_bool("viz_sphere_seed",      viz_sphere_seed);
+  load_real("viz_seed_radius_frac", viz_seed_radius_frac);
+  load_bool("viz_division",         viz_division);
 }
 
 void SimParam::PrintParams() const {

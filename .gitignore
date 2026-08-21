@@ -7,6 +7,9 @@ logs/
 # Generated run archives and experiment outputs
 # (runs/ now holds base/, treatment/, csc/ subfolders)
 runs/
+
+# Presentation assets (decks, images, curated HPC run archives) kept local only
+presentation/
 params.json.bak
 data-export/*.png
 data-export/ode_reference.csv

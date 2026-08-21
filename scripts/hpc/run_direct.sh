@@ -159,6 +159,8 @@ json.dump(cfg, open('${TMP_CFG}', 'w'), indent=2)
     --duration "$(( END - START ))" \
     --note     "${NOTE}"
   rm -f "${TMP_CFG}"
+  # The drug-diffusion ParaView state is auto-fixed inside the binary itself
+  # (FixDrugParaviewState in main), so it applies no matter how the sim is run.
 
   echo ""
   echo "================================================================"
