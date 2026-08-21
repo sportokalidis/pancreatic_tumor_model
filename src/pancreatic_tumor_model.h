@@ -4,6 +4,33 @@
 // BioDynaMo collaboration. Apache-2.0 license.
 //
 // -----------------------------------------------------------------------------
+//
+// Pancreatic tumor agent-based model — BioDynaMo replication of the ODE system
+// in Akman Yıldız et al. (2021), J Biol Syst 29(4):799-832. Each ODE state
+// variable becomes a population of discrete agents; each ODE term becomes a
+// stochastic per-agent event (division / death / recruitment) via the exact
+// Poisson rate→probability mapping in ProbFromRate().
+//
+// Agents (cell types)     ODE var   Behavior          Paper eq.
+//   TumorCell     (PCC)      C       TumorBehavior      2.1
+//   StellateCell  (PSC)      P       PSCBehavior        2.2
+//   EffectorTCell (CD8 CTL)  E       EffectorBehavior   2.3
+//   NKCell        (NK)       N       NKBehavior         2.4
+//   HelperTCell   (CD4)      H       HelperBehavior     2.5
+//   TRegCell      (Treg)     R       TRegBehavior       2.6
+//   CancerStemCell (CSC)     S       CSCBehavior        6.1/6.7  (optional)
+//
+// A single invisible ReporterCell carries SourceBehavior (constant immune/CSC
+// influx terms that must not scale with current population) and ReportPopCounts
+// (daily CSV census).
+//
+// Two counting modes (SimParam::use_local_counts): a global census (all agents,
+// well-mixed / ODE-faithful) or a local neighborhood census (spatial, with
+// DensityCompensation() rescaling local counts to a global equivalent). Optional
+// layers — drug treatment (Section 5, DrugState) and cancer stem cells
+// (Section 6) — stay completely inert unless their SimParam flags are set.
+//
+// -----------------------------------------------------------------------------
 #ifndef PANCREATIC_TUMOR_MODEL_H_
 #define PANCREATIC_TUMOR_MODEL_H_
 
@@ -55,6 +82,7 @@ inline real_t ProbFromRate(real_t rate_per_day, real_t dt_day) {
 // cells inherit it correctly after Divide().  The color_ field is the only
 // custom field here — it is enough for visualization.
 
+// C — Pancreatic cancer cell (PCC). The tumor population of Eq. 2.1.
 class TumorCell : public Cell {
   BDM_AGENT_HEADER(TumorCell, Cell, 1);
 
@@ -78,6 +106,7 @@ class TumorCell : public Cell {
   int color_ = 0;
 };
 
+// P — Pancreatic stellate cell (PSC). Stroma population of Eq. 2.2; boosts PCC.
 class StellateCell : public Cell {
   BDM_AGENT_HEADER(StellateCell, Cell, 1);
 
@@ -101,6 +130,7 @@ class StellateCell : public Cell {
   int color_ = 0;
 };
 
+// E — Effector CD8+ cytotoxic T lymphocyte (CTL). Kills PCCs; Eq. 2.3.
 class EffectorTCell : public Cell {
   BDM_AGENT_HEADER(EffectorTCell, Cell, 1);
 
@@ -124,6 +154,7 @@ class EffectorTCell : public Cell {
   int color_ = 0;
 };
 
+// N — Natural killer cell. Innate cytotoxic killer of PCCs; Eq. 2.4.
 class NKCell : public Cell {
   BDM_AGENT_HEADER(NKCell, Cell, 1);
 
@@ -147,6 +178,7 @@ class NKCell : public Cell {
   int color_ = 0;
 };
 
+// H — Helper CD4+ T cell. Drives immune proliferation (Hill in H); Eq. 2.5.
 class HelperTCell : public Cell {
   BDM_AGENT_HEADER(HelperTCell, Cell, 1);
 
@@ -170,6 +202,7 @@ class HelperTCell : public Cell {
   int color_ = 0;
 };
 
+// R — Regulatory T cell (Treg). Suppresses CTL/NK killing; Eq. 2.6.
 class TRegCell : public Cell {
   BDM_AGENT_HEADER(TRegCell, Cell, 1);
 
